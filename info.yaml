@@ -1,0 +1,112 @@
+# TinyTapeout project metadata for TT-A: the HYDRA-130 Mathematical Operation MUX.
+#
+# TILE SIZING — MEASURED against the real sky130 Liberty, not estimated.
+#
+#     13,734 sky130_fd_sc_hd cells
+#     110,796 um^2 of cell area, as the library reports it
+#
+#     3x2 = 114,858 um^2   96% utilisation, too tight
+#     4x2 = 154,113 um^2   72%, too tight for routing
+#     3x4 = 260,160 um^2   43%, CHOSEN
+#
+# Those figures come from tt-support-tools/tile_sizes.yaml, which is the list
+# the tooling actually uses. A session briefly changed this to 6x2 on the
+# strength of the template's info.yaml comment, which abbreviates the valid
+# set to the two-row sizes and omits 3x4, 4x4 and 5x4. The template comment is
+# not authoritative; tile_sizes.yaml is.
+#
+# The earlier estimate said 100,191 um^2 from generic-gate counts and a 0.70
+# remap factor. The real number is 11% larger. The tile choice is unchanged,
+# but it was right with less margin than the estimate claimed -- and across
+# other blocks the same estimate was low by as much as 53%, non-uniformly,
+# because a single hand-applied constant cannot track the flop-to-logic ratio.
+#
+# Regenerate with tools/timing.sh, which maps to real cells:
+#
+#     LIB=/path/to/sky130_fd_sc_hd__tt_025C_1v80.lib \
+#       ./tools/timing.sh tt_um_hydra_mom <sources>
+#
+# Session 131, remeasured with Yosys 0.33 against the PDK's own liberty, then
+# placed and globally routed in OpenROAD on TinyTapeout's 3x4 DEF template
+# (tools/tt_synth.sh, tools/openroad_tt.py):
+#
+#     20,207 cells, 127,028 um^2       50% of the 3x4 core, by OpenROAD
+#     after taps and buffers            52%
+#     global route                      zero overflow on every layer
+#     20 MHz clock                      +18.1 ns slack after CTS and routing
+#
+# The cell count is 47% above the 13,734 quoted above; the mapping differs
+# between Yosys versions and ABC scripts, which is the 19% spread timing.sh
+# warns about, plus a different liberty. The tile choice does not move: 4x2
+# would be 82%, unroutable. 3x4 stays.
+#
+# STILL RUN THE HARDEN AND READ design__instance__utilization FROM metrics.json
+# BEFORE ORDERING. Cell area is not die area: it excludes routing congestion,
+# power straps, and the tile's own boundary cells.
+#
+# Do NOT hand-edit src/config.json to force a smaller die. That is what broke
+# the ASICirific submission: a config missing FP_SIZING made LibreLane ignore
+# DIE_AREA, DRC and LVS passed against the wrong die, and the only symptom was
+# a boundary XOR failure that read as a tool bug. Three weeks.
+
+project:
+  title:        "TinyTapeout-Hydra"
+  author:       "Aleksander J. Norman"
+  discord:      ""
+  description:  "Hardware dispatch across five compute engines in three cycles, using a roofline cost model that calibrates itself online from measured completion times."
+  language:     "SystemVerilog"
+  # 20 MHz, MEASURED, not chosen.
+  #
+  # OpenSTA against the sky130 typical corner reports a 46.56 ns
+  # register-to-register period for this netlist -- 21.5 MHz. The 25 MHz
+  # previously declared here was never measured and the tile could not have
+  # met it.
+  #
+  # Synthesis timing is pessimistic because it inserts no buffers, and the
+  # worst fanout here is 71 -- modest, so place-and-route will recover less
+  # than it would on a wide pipeline. Assuming it recovers enough to reach
+  # 25 MHz is exactly the assumption that wastes a tapeout: the test harness
+  # drives whatever this field says, and a part clocked past its limit fails.
+  #
+  # 20 MHz gives 50 ns against a measured 46.56 ns -- margin that exists
+  # BEFORE any PAR improvement rather than depending on it. The MOM takes
+  # three cycles per descriptor either way; nothing about the design cares.
+  clock_hz:     20000000
+
+  tiles: "3x4"
+
+  top_module:  "tt_um_hydra_mom"
+
+  source_files:
+    - "project.v"
+
+# Pin map. See src/tt_um_hydra_mom.sv for the protocol.
+pinout:
+  ui[0]: "sdi - serial descriptor data, MSB first"
+  ui[1]: "shift - shift sdi into the descriptor register"
+  ui[2]: "go - present the descriptor and latch the result (edge detected)"
+  ui[3]: "comp - pulse a completion for the tag on ui[7:4] (edge detected)"
+  ui[4]: "comp_tag[0]"
+  ui[5]: "comp_tag[1]"
+  ui[6]: "comp_tag[2]"
+  ui[7]: "comp_tag[3]"
+
+  uo[0]: "engine[0] - selected engine index"
+  uo[1]: "engine[1]"
+  uo[2]: "engine[2]"
+  uo[3]: "dispatched - a dispatch occurred for the last go"
+  uo[4]: "unsupported - no engine could ever execute that descriptor"
+  uo[5]: "stale - a completion arrived for a tag not in flight (sticky)"
+  uo[6]: "any_busy - at least one tag outstanding"
+  uo[7]: "ready - the MOM can accept a descriptor"
+
+  uio[0]: "tag[0] - tag allocated by the last dispatch"
+  uio[1]: "tag[1]"
+  uio[2]: "tag[2]"
+  uio[3]: "tag[3]"
+  uio[4]: "margin[0] - runner-up margin, top nibble, saturated"
+  uio[5]: "margin[1]"
+  uio[6]: "margin[2]"
+  uio[7]: "margin[3]"
+
+yaml_version: 6
