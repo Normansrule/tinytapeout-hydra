@@ -209,3 +209,191 @@ async def test_edge_detected_go(dut):
         f"expected consecutive tags 0,1,2 but got {tags}; a level-sensitive "
         "`go` would consume several tags per request"
     )
+
+
+# =============================================================================
+# Session 136 -- silicon-readiness tests.
+#
+# The three tests above prove the tile does its job. These prove it cannot be
+# put into a state it does not recover from, which is what matters once the
+# design is on a wafer and cannot be patched. Each one targets a way first
+# silicon commonly fails: an unreset flop driving a pin, a reset that lands
+# mid-transaction, a resource that runs out and is never given back, a
+# descriptor the machine can neither execute nor reject, and a bogus
+# completion from a confused host.
+# =============================================================================
+
+async def retire(dut, tag):
+    dut.ui_in.value = (tag << 4) | (1 << 3)
+    await ClockCycles(dut.clk, 4)
+    dut.ui_in.value = 0
+    await ClockCycles(dut.clk, 4)
+
+
+@cocotb.test()
+async def test_no_x_on_any_pin_after_reset(dut):
+    """Every output pin must be a clean 0 or 1 from the first clock after
+    reset -- no X, no Z -- and must stay that way with no stimulus at all.
+
+    An unreset register that feeds a pin is invisible in RTL simulation until
+    something reads the pin, and invisible on silicon until the board misreads
+    it. This is the cheapest test in the file and the one most worth having.
+    """
+    cocotb.start_soon(Clock(dut.clk, 40, unit="ns").start())
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.ena.value = 1
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 3)
+    dut.rst_n.value = 1
+    for cyc in range(200):
+        await ClockCycles(dut.clk, 1)
+        for name in ("uo_out", "uio_out", "uio_oe"):
+            v = getattr(dut, name).value
+            assert v.is_resolvable, f"{name} has X/Z {cyc} cycles after reset: {v}"
+    s = decode_status(dut)
+    assert s["ready"], "tile not ready after reset with nothing outstanding"
+    assert not s["busy"] and not s["dispatched"] and not s["unsupported"] and not s["stale"], \
+        f"status not clean after reset: {s}"
+
+
+@cocotb.test()
+async def test_reset_mid_transaction(dut):
+    """Reset asserted halfway through a descriptor shift must leave the tile
+    in a state where the NEXT full descriptor dispatches normally.
+
+    On a board, reset comes from a button or a supervisor and lands whenever
+    it lands. A shift register that keeps its half-loaded contents through
+    reset would corrupt the first real descriptor after every power glitch.
+    """
+    cocotb.start_soon(Clock(dut.clk, 40, unit="ns").start())
+    await reset(dut)
+
+    junk = build_descriptor(OPC_GEMM, DT_POLY_Q, 3, 3, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFFFF)
+    for i in range(WD_W - 1, WD_W // 2, -1):            # half the bits only
+        dut.ui_in.value = ((junk >> i) & 1) | (1 << 1)
+        await ClockCycles(dut.clk, 1)
+    dut.ui_in.value = 0
+
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 3)
+    dut.rst_n.value = 1
+    await ClockCycles(dut.clk, 3)
+
+    good = build_descriptor(OPC_GEMM, DT_INT8, LAT_BALANCED, PWR_BALANCED, 4, 4, 4, 48)
+    await shift_and_go(dut, good)
+    s = decode_status(dut)
+    assert s["dispatched"] and not s["unsupported"], \
+        f"first descriptor after a mid-shift reset did not dispatch: {s}"
+    assert s["tag"] == 0, f"tags were not cleared by reset (got tag {s['tag']})"
+    await retire(dut, s["tag"])
+
+
+@cocotb.test()
+async def test_tag_exhaustion_and_recovery(dut):
+    """Allocate every tag without retiring any, then present one more.
+
+    The contract this pins down (first written as the opposite, and corrected
+    by the tile): `ready` is the PIPELINE's handshake, not "a tag is free".
+    With every tag in flight and the pipeline empty, the tile still accepts
+    one descriptor and HOLDS it -- nothing is dropped -- and only then drops
+    `ready`, which is the back-pressure a host must poll before shifting the
+    next one. When a tag is retired, the held descriptor dispatches on its
+    own, taking that tag, and `ready` returns. Tags are never duplicated and
+    never wrap.
+    """
+    cocotb.start_soon(Clock(dut.clk, 40, unit="ns").start())
+    await reset(dut)
+    NTAG = 8
+    desc = build_descriptor(OPC_GEMM, DT_INT8, LAT_BALANCED, PWR_BALANCED, 4, 4, 4, 48)
+
+    seen = []
+    for i in range(NTAG):
+        assert decode_status(dut)["ready"], f"not ready before allocation {i}"
+        await shift_and_go(dut, desc)
+        s = decode_status(dut)
+        assert s["dispatched"], f"allocation {i} did not dispatch: {s}"
+        assert s["tag"] not in seen, f"tag {s['tag']} handed out twice"
+        seen.append(s["tag"])
+    assert sorted(seen) == list(range(NTAG)), f"tags allocated were {seen}"
+    s = decode_status(dut)
+    assert s["busy"], "busy low with every tag in flight"
+    assert s["ready"], "pipeline empty, so the tile should still accept one descriptor"
+
+    # The ninth: accepted into the pipeline, not dispatched, and now the tile
+    # says so on the pin.
+    await shift_and_go(dut, desc)
+    s = decode_status(dut)
+    assert not s["dispatched"], "dispatched with no free tag"
+    assert not s["unsupported"], "a stalled descriptor was reported as unsupported"
+    assert not s["ready"], "ready still high with a descriptor held and no tag free"
+
+    # Retire one tag: the held descriptor must dispatch BY ITSELF with it.
+    await retire(dut, seen[3])
+    s = decode_status(dut)
+    assert s["dispatched"] and s["tag"] == seen[3], \
+        f"held descriptor did not dispatch with the freed tag {seen[3]}: {s}"
+    assert s["ready"], "ready did not return after the held descriptor dispatched"
+
+    for t in range(NTAG):
+        await retire(dut, t)
+    s = decode_status(dut)
+    assert not s["busy"] and s["ready"], f"not idle after retiring everything: {s}"
+
+
+@cocotb.test()
+async def test_every_descriptor_class_terminates(dut):
+    """Sweep every op_class x dtype x latency x power combination with a
+    representative shape. For each, the tile must settle to EXACTLY ONE of
+    dispatched / unsupported within a bounded number of cycles, and `ready`
+    must come back. Both flags, neither flag, or no `ready` is a hang or a
+    contradiction that a host cannot recover from without a reset.
+    """
+    cocotb.start_soon(Clock(dut.clk, 40, unit="ns").start())
+    await reset(dut)
+    n_disp = n_unsup = 0
+    for opc in range(16):
+        for dt in range(8):
+            for lat in (0, 3):
+                for pwr in (0, 3):
+                    desc = build_descriptor(opc, dt, lat, pwr, 8, 8, 8, 192)
+                    await shift_and_go(dut, desc)
+                    s = decode_status(dut)
+                    assert s["dispatched"] != s["unsupported"], \
+                        f"opc={opc} dt={dt} lat={lat} pwr={pwr}: both or neither flag set: {s}"
+                    if s["dispatched"]:
+                        n_disp += 1
+                        await retire(dut, s["tag"])
+                    else:
+                        n_unsup += 1
+                    assert decode_status(dut)["ready"], \
+                        f"opc={opc} dt={dt}: ready did not return"
+    dut._log.info(f"descriptor sweep: {n_disp} dispatched, {n_unsup} unsupported")
+    assert n_disp > 0 and n_unsup > 0, "sweep must exercise both outcomes"
+
+
+@cocotb.test()
+async def test_stale_completion_is_flagged_not_absorbed(dut):
+    """A completion for a tag that is not in flight must raise `stale` and
+    must not free, corrupt, or dispatch anything. A host that loses track of
+    its tags is a certainty over a product's life; the tile must survive it.
+    """
+    cocotb.start_soon(Clock(dut.clk, 40, unit="ns").start())
+    await reset(dut)
+    desc = build_descriptor(OPC_GEMM, DT_INT8, LAT_BALANCED, PWR_BALANCED, 4, 4, 4, 48)
+    await shift_and_go(dut, desc)
+    s = decode_status(dut)
+    assert s["dispatched"]
+    live = s["tag"]
+
+    await retire(dut, (live + 5) % 8)                # not in flight
+    s = decode_status(dut)
+    assert s["stale"], "completion of a free tag was not flagged"
+    assert s["busy"], "a stale completion freed the live tag"
+
+    await retire(dut, live)
+    s = decode_status(dut)
+    assert not s["busy"], "the real completion did not free the live tag"
+    await shift_and_go(dut, desc)
+    s = decode_status(dut)
+    assert s["dispatched"], "tile did not accept work after a stale completion"
