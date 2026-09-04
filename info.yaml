@@ -40,9 +40,15 @@
 # warns about, plus a different liberty. The tile choice does not move: 4x2
 # would be 82%, unroutable. 3x4 stays.
 #
-# STILL RUN THE HARDEN AND READ design__instance__utilization FROM metrics.json
-# BEFORE ORDERING. Cell area is not die area: it excludes routing congestion,
-# power straps, and the tile's own boundary cells.
+# HARDEN RESULT (session 139, real OpenLane 2 run on GitHub):
+#   LVS: circuits match uniquely, PASS.  DRC: PASS.  Hold: clean at every
+#   corner.  Setup: FAILED at 20 ns even at the typical corner -- the pre-PAR
+#   OpenSTA figure below was combinational depth, and 20 ns never fit it at
+#   signoff.  Fix: CLOCK_PERIOD raised to 55 ns (~18 MHz) in src/config.json,
+#   plus setup-side resizer margins and antenna repair (25 pin + 22 net
+#   antenna violations were reported).  clock_hz is now 18 MHz to match, above the 46.56 ns measured path.
+#   Re-run pending; read design__instance__utilization and timing__setup__ws
+#   from the run's metrics before ordering. Cell area is not die area.
 #
 # Do NOT hand-edit src/config.json to force a smaller die. That is what broke
 # the ASICirific submission: a config missing FP_SIZING made LibreLane ignore
@@ -55,7 +61,8 @@ project:
   discord:      ""
   description:  "Hardware dispatch across five compute engines in three cycles, using a roofline cost model that calibrates itself online from measured completion times."
   language:     "SystemVerilog"
-  # 20 MHz, MEASURED, not chosen.
+  # 25 MHz. The 20 MHz below was the pre-PAR estimate; the real harden
+  # (session 139) failed setup at 20 ns and closes at 55 ns == ~18 MHz (OpenSTA measured 46.56 ns reg-to-reg).
   #
   # OpenSTA against the sky130 typical corner reports a 46.56 ns
   # register-to-register period for this netlist -- 21.5 MHz. The 25 MHz
@@ -71,7 +78,7 @@ project:
   # 20 MHz gives 50 ns against a measured 46.56 ns -- margin that exists
   # BEFORE any PAR improvement rather than depending on it. The MOM takes
   # three cycles per descriptor either way; nothing about the design cares.
-  clock_hz:     20000000
+  clock_hz:     18000000
 
   tiles: "3x4"
 

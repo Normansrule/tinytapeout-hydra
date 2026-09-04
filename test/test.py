@@ -123,7 +123,7 @@ def decode_status(dut):
 async def test_roofline_crossover(dut):
     """The two tile sizes must choose DIFFERENT engines."""
     dut._log.info("start")
-    cocotb.start_soon(Clock(dut.clk, 40, unit="ns").start())   # 25 MHz
+    cocotb.start_soon(Clock(dut.clk, 55, unit="ns").start())   # ~18 MHz, matches signoff (s139)
     await reset(dut)
 
     assert int(dut.uio_oe.value) == 0xFF, "every bidirectional must be an output"
@@ -171,7 +171,7 @@ async def test_unsupported_is_retired(dut):
     the natural example: no engine performs a matrix multiply over ring
     elements.
     """
-    cocotb.start_soon(Clock(dut.clk, 40, unit="ns").start())
+    cocotb.start_soon(Clock(dut.clk, 55, unit="ns").start())
     await reset(dut)
 
     bad = build_descriptor(OPC_GEMM, DT_POLY_Q, LAT_BALANCED, PWR_BALANCED,
@@ -194,7 +194,7 @@ async def test_edge_detected_go(dut):
     advance, and the RATE it advances at is what distinguishes edge from level
     detection.
     """
-    cocotb.start_soon(Clock(dut.clk, 40, unit="ns").start())
+    cocotb.start_soon(Clock(dut.clk, 55, unit="ns").start())
     await reset(dut)
 
     desc = build_descriptor(OPC_GEMM, DT_INT8, LAT_BALANCED, PWR_BALANCED,
@@ -239,7 +239,7 @@ async def test_no_x_on_any_pin_after_reset(dut):
     something reads the pin, and invisible on silicon until the board misreads
     it. This is the cheapest test in the file and the one most worth having.
     """
-    cocotb.start_soon(Clock(dut.clk, 40, unit="ns").start())
+    cocotb.start_soon(Clock(dut.clk, 55, unit="ns").start())
     dut.ui_in.value = 0
     dut.uio_in.value = 0
     dut.ena.value = 1
@@ -266,7 +266,7 @@ async def test_reset_mid_transaction(dut):
     it lands. A shift register that keeps its half-loaded contents through
     reset would corrupt the first real descriptor after every power glitch.
     """
-    cocotb.start_soon(Clock(dut.clk, 40, unit="ns").start())
+    cocotb.start_soon(Clock(dut.clk, 55, unit="ns").start())
     await reset(dut)
 
     junk = build_descriptor(OPC_GEMM, DT_POLY_Q, 3, 3, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFFFF)
@@ -302,7 +302,7 @@ async def test_tag_exhaustion_and_recovery(dut):
     own, taking that tag, and `ready` returns. Tags are never duplicated and
     never wrap.
     """
-    cocotb.start_soon(Clock(dut.clk, 40, unit="ns").start())
+    cocotb.start_soon(Clock(dut.clk, 55, unit="ns").start())
     await reset(dut)
     NTAG = 8
     desc = build_descriptor(OPC_GEMM, DT_INT8, LAT_BALANCED, PWR_BALANCED, 4, 4, 4, 48)
@@ -349,7 +349,7 @@ async def test_every_descriptor_class_terminates(dut):
     must come back. Both flags, neither flag, or no `ready` is a hang or a
     contradiction that a host cannot recover from without a reset.
     """
-    cocotb.start_soon(Clock(dut.clk, 40, unit="ns").start())
+    cocotb.start_soon(Clock(dut.clk, 55, unit="ns").start())
     await reset(dut)
     n_disp = n_unsup = 0
     for opc in range(16):
@@ -378,7 +378,7 @@ async def test_stale_completion_is_flagged_not_absorbed(dut):
     must not free, corrupt, or dispatch anything. A host that loses track of
     its tags is a certainty over a product's life; the tile must survive it.
     """
-    cocotb.start_soon(Clock(dut.clk, 40, unit="ns").start())
+    cocotb.start_soon(Clock(dut.clk, 55, unit="ns").start())
     await reset(dut)
     desc = build_descriptor(OPC_GEMM, DT_INT8, LAT_BALANCED, PWR_BALANCED, 4, 4, 4, 48)
     await shift_and_go(dut, desc)
