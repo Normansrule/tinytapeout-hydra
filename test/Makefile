@@ -18,6 +18,6 @@ endif
 
 VERILOG_SOURCES += $(PWD)/tb.v
 TOPLEVEL = tb
-MODULE   = test
+COCOTB_TEST_MODULES = test   # cocotb 2.x name (MODULE is deprecated)
 
 include $(shell cocotb-config --makefiles)/Makefile.sim

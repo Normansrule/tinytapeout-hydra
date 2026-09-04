@@ -28,8 +28,20 @@ jobs:
           cd test
           make clean
           make
-          # make will return success even if the test fails, so check for failure in the results.xml
-          ! grep failure results.xml
+          # make returns success even if a test fails, so inspect results.xml.
+          # NOTE: grep for the word "failure" is WRONG with cocotb 2.x, whose
+          # JUnit output always carries the attribute failures="0" -- the
+          # substring matched, and 8/8 passing runs were reported as failed
+          # (HYDRA session 140). Check the counts instead.
+          python3 - <<'EOF'
+          import re, sys
+          x = open("results.xml").read()
+          f = sum(int(v) for v in re.findall(r'failures="(\d+)"', x))
+          e = sum(int(v) for v in re.findall(r'errors="(\d+)"', x))
+          t = sum(int(v) for v in re.findall(r'tests="(\d+)"', x))
+          print(f"tests={t} failures={f} errors={e}")
+          sys.exit(1 if (f or e or t == 0) else 0)
+          EOF
 
       - name: Test Summary
         uses: test-summary/action@v2.3
