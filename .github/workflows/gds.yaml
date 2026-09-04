@@ -28,18 +28,94 @@ jobs:
   gl_test:
     needs: gds
     runs-on: ubuntu-24.04
+    # Inlined from TinyTapeout/tt-gds-action/gl_test@tt10, step for step, with
+    # ONE change: the pass/fail check. Upstream ends with
+    #     ! grep failure results.xml
+    # which matches the substring of cocotb 2.x's attribute failures="0" and
+    # so reports every PASSING run as failed (HYDRA session 140). The check
+    # below reads the counts. Everything else -- netlist source, PDK version,
+    # cocotb install, GATES=yes make -- is identical to upstream, so this IS
+    # the gate-level test TinyTapeout runs, just with an honest verdict.
     steps:
       - name: checkout repo
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: GL test
-        uses: TinyTapeout/tt-gds-action/gl_test@tt10
+      - name: Download GDS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tt_submission
+
+      - name: Set up environment variables
+        run: |
+          cat << EOF >> $GITHUB_ENV
+          PDK_ROOT=/home/runner/pdk
+          PDK=sky130A
+          EOF
+
+      - name: Install Sky130 PDK
+        uses: TinyTapeout/volare-action@v2
+        with:
+          pdk_name: sky130
+          pdk_version: cd1748bb197f9b7af62a54507de6624e30363943
+          pdk_root: /home/runner/pdk
+
+      - name: Setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python packages
+        run: pip install -r test/requirements.txt
+
+      - name: Install iverilog
+        run: sudo apt-get update && sudo apt-get install -y iverilog
+
+      - name: Run gate-level tests
+        run: |
+          cp tt_submission/*.v test/gate_level_netlist.v
+          cd test
+          rm -f tb.vcd results.xml
+          make clean
+          GATES=yes make
+          test -f results.xml
+          python3 - <<'EOF'
+          import re, sys
+          x = open("results.xml").read()
+          f = sum(int(v) for v in re.findall(r'failures="(\d+)"', x))
+          e = sum(int(v) for v in re.findall(r'errors="(\d+)"', x))
+          t = sum(int(v) for v in re.findall(r'tests="(\d+)"', x))
+          print(f"gate-level: tests={t} failures={f} errors={e}")
+          sys.exit(1 if (f or e or t == 0) else 0)
+          EOF
+
+      - name: Upload VCD
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gatelevel_test_vcd
+          path: |
+            test/tb.vcd
+            test/results.xml
+
+      - name: Test Summary
+        if: always()
+        uses: test-summary/action@v2.3
+        with:
+          paths: test/results.xml
 
   viewer:
     needs: gds
     runs-on: ubuntu-24.04
+    # The viewer publishes the GDS layout to GitHub Pages. It can only
+    # succeed once Pages is enabled on the repo (Settings -> Pages -> Source:
+    # GitHub Actions); with Pages off it fails with a 404 on deploy. That is
+    # a repo setting, not a design or code fault, so it must not turn a
+    # verified harden red. continue-on-error keeps the run green and the
+    # viewer becomes a warning until Pages is switched on, after which it
+    # deploys normally. (HYDRA session 140)
+    continue-on-error: true
     permissions:
       pages: write      # to deploy to Pages
       id-token: write   # to verify the deployment originates from an appropriate source
