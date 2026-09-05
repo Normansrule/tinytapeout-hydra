@@ -146,6 +146,7 @@ module mom_top
 
   for (genvar e = 0; e < ENG_N; e++) begin : g_cost
     mom_cost_engine #(.ENGINE_ID(engine_e'(e))) u_ce (
+      .clk(clk), .rst_n(rst_n), .adv(a_adv),
       .log2_w(f_lg_w), .bytes_q(f_wd.bytes), .log2_i(f_lg_i),
       .dtype(f_wd.dtype), .op_class(f_wd.op_class), .lat_hint(f_wd.lat_hint),
       .lambda_sh(lambda_sh_of(f_wd.pwr_hint)),
@@ -161,21 +162,81 @@ module mom_top
   // ===========================================================================
   // Stage 3: argmin
   // ===========================================================================
+  logic [ENG_N-1:0]  ccapable;
+
+  // ---------------------------------------------------------------------------
+  // Stage 2b (session 141): the cost register.
+  //
+  // The first harden of the TT tile put the whole feature -> five cost
+  // engines -> argmin -> dispatch chain in ONE cycle: 98 cells, 32 ns at the
+  // typical corner and 62 ns at ss_100C_1v60, where it violated setup by
+  // 6.5 ns at a 55 ns period. No amount of buffering fixes a path that
+  // long; the fix is a register in the middle. This stage captures the
+  // engines' outputs (cost, t_pred, valid, capable) together with the
+  // feature word they were computed from, and mom_select reads the
+  // registered copy. Dispatch latency becomes four cycles instead of three,
+  // which a roofline dispatcher does not notice.
+  //
+  // Handshake: a plain pipeline register that accepts when empty or when
+  // stage 3 drains it. queue_depth/engine_full as seen by the cost engines
+  // are one cycle old; that only shades the estimate, and the scoreboard's
+  // own full check is on live state, so a full engine is still refused.
+  // ---------------------------------------------------------------------------
+  logic [ENG_N-1:0][COST_W-1:0] cost_q;
+  logic [ENG_N-1:0][COST_W-1:0] t_pred_q;
+  logic [ENG_N-1:0]             cvalid_q, ccapable_q;
+  work_desc_t                   c_wd, a_wd;
+  logic                         c_valid, a_valid;
+  wire                          c_ready;                 // stage 3 drains us
+  wire                          c_accept = !c_valid || c_ready;
+  // Stage 2a (session 144): the cost engines' own mid-pipeline register.
+  // a_valid says that register holds a descriptor; it advances when the
+  // cost register can accept. Both stages move in lockstep on a_adv.
+  wire                          a_adv    = !a_valid || c_accept;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      a_valid <= 1'b0; a_wd <= '0;
+    end else if (a_adv) begin
+      a_valid <= f_valid;
+      if (f_valid) a_wd <= f_wd;
+    end
+  end
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      c_valid    <= 1'b0;
+      cost_q     <= '0;
+      t_pred_q   <= '0;
+      cvalid_q   <= '0;
+      ccapable_q <= '0;
+      c_wd       <= '0;
+    end else if (c_accept) begin
+      c_valid    <= a_valid;
+      if (a_valid) begin
+        cost_q     <= cost;              // stage B output for the a_wd descriptor
+        t_pred_q   <= t_pred;
+        cvalid_q   <= cvalid;
+        ccapable_q <= ccapable;
+        c_wd       <= a_wd;
+      end
+    end
+  end
+
   logic [2:0]        sel_eng;
   logic [COST_W-1:0] sel_cost;
   logic              sel_ok;
   logic              sel_capable;
-  logic [ENG_N-1:0]  ccapable;
 
   mom_select u_sel (
-    .cost(cost), .valid(cvalid), .capable(ccapable),
+    .cost(cost_q), .valid(cvalid_q), .capable(ccapable_q),
     .sel_engine(sel_eng), .sel_cost(sel_cost),
     .any_valid(sel_ok), .any_capable(sel_capable),
     .sel_margin(obs_margin)
   );
 
   // An unsatisfiable descriptor is consumed and reported, never retried.
-  wire unsupported = f_valid && !sel_capable;
+  wire unsupported = c_valid && !sel_capable;
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -183,7 +244,7 @@ module mom_top
       err_tag         <= 8'd0;
     end else begin
       err_unsupported <= unsupported;
-      if (unsupported) err_tag <= f_wd.tag;
+      if (unsupported) err_tag <= c_wd.tag;
     end
   end
 
@@ -194,10 +255,10 @@ module mom_top
 
   mom_scoreboard #(.NTAG(NTAG), .QMAX(QMAX)) u_sb (
     .clk(clk), .rst_n(rst_n),
-    .disp_valid(f_valid && sel_ok && disp_accept),
+    .disp_valid(c_valid && sel_ok && disp_accept),
     .disp_ready(sb_ready),
-    .disp_engine(sel_eng), .disp_opclass(f_wd.op_class),
-    .disp_t_pred(t_pred[sel_eng]), .disp_tag(disp_tag),
+    .disp_engine(sel_eng), .disp_opclass(c_wd.op_class),
+    .disp_t_pred(t_pred_q[sel_eng]), .disp_tag(disp_tag),
     .comp_valid(comp_valid), .comp_tag(comp_tag),
     .cal_valid(cal_valid), .cal_engine(cal_engine),
     .cal_opclass(cal_opclass),
@@ -211,12 +272,13 @@ module mom_top
   // A descriptor advances only when an engine was selectable AND a tag was
   // available AND the crossbar accepted. Any of the three failing leaves it in
   // stage 1 to retry, which is why there is no separate stall FSM.
-  assign disp_valid = f_valid && sel_ok && sb_ready;
+  assign disp_valid = c_valid && sel_ok && sb_ready;
   assign disp_engine = sel_eng;
-  assign disp_wd     = f_wd;
+  assign disp_wd     = c_wd;
   // Drain on a successful dispatch OR on an unsupported descriptor. The second
   // term is what breaks the livelock.
-  assign f_ready     = (disp_valid && disp_accept) || unsupported;
+  assign c_ready     = (disp_valid && disp_accept) || unsupported;
+  assign f_ready     = a_adv;
 
 endmodule
 

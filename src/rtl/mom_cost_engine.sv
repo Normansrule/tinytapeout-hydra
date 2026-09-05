@@ -86,6 +86,15 @@ module mom_cost_engine
   parameter engine_e ENGINE_ID = ENG_CPU
 ) (
   // ---- features from stage 1 -----------------------------------------------
+  // Session 144: the engine is now a TWO-STAGE pipeline. The first harden
+  // measured the whole features -> cost path at 62 ns at ss_100C_1v60 (103
+  // cells); a register after t_pred splits it near the middle. `adv` is the
+  // pipeline advance from mom_top (high when the stage below can accept), so
+  // the five engines move in lockstep with mom_top's cost register and never
+  // lose a descriptor under back-pressure.
+  input  wire                     clk,
+  input  wire                     rst_n,
+  input  wire                     adv,
   input  wire  [7:0]              log2_w,      // log2 of work volume
   input  wire  [23:0]             bytes_q,     // operand traffic, linear
   input  wire  signed [8:0]       log2_i,      // log2 of arithmetic intensity
@@ -143,8 +152,8 @@ module mom_cost_engine
   // descriptor to stall the pipeline forever: the selector saw "nothing
   // available", the descriptor stayed in stage 1, and it retried every cycle
   // until reset. See mom_top's unsupported-descriptor path.
-  assign capable     = dt_supported && opc_supported;
-  assign valid       = capable && !engine_busy_full;
+  wire capable_a = dt_supported && opc_supported;
+  wire valid_a   = capable_a && !engine_busy_full;
 
   // ===========================================================================
   // Equation (2): attainable performance in the log domain
@@ -230,7 +239,13 @@ module mom_cost_engine
                       + {8'd0, t_move}
                       + {32'd0, queue_depth};
 
-  assign t_pred = (t_sum_w > {8'd0, COST_SAT}) ? COST_SAT : t_sum_w[COST_W-1:0];
+  wire [COST_W-1:0] t_pred_a = (t_sum_w > {8'd0, COST_SAT}) ? COST_SAT : t_sum_w[COST_W-1:0];
+  // Pipeline-register state (session 144); the always_ff sits after stage A.
+  logic [COST_W-1:0] t_pred_q;
+  logic [31:0]       e_ops_q, e_mem_q;
+  logic              valid_q, capable_q;
+  logic [3:0]        lambda_q;
+
 
   // ===========================================================================
   // Equation (6): apply the online calibration factor
@@ -263,8 +278,8 @@ module mom_cost_engine
   // ---------------------------------------------------------------------------
   logic [4:0] tp_e;
   always_comb begin
-    if      (t_pred[31:16] != 16'd0) tp_e = 5'd16;
-    else if (t_pred[15:8]  !=  8'd0) tp_e = 5'd8;
+    if      (t_pred_q[31:16] != 16'd0) tp_e = 5'd16;
+    else if (t_pred_q[15:8]  !=  8'd0) tp_e = 5'd8;
     else                             tp_e = 5'd0;
   end
 
@@ -272,9 +287,9 @@ module mom_cost_engine
   // full leading-zero normalize would need a 32-bit priority encoder and a
   // barrel shifter to recover at most 7 more bits of a quantity already
   // precise to one part in 65,536. Three cases cost three muxes.
-  wire [15:0] tp_m = (tp_e == 5'd16) ? t_pred[31:16]
-                   : (tp_e == 5'd8)  ? t_pred[23:8]
-                                     : t_pred[15:0];
+  wire [15:0] tp_m = (tp_e == 5'd16) ? t_pred_q[31:16]
+                   : (tp_e == 5'd8)  ? t_pred_q[23:8]
+                                     : t_pred_q[15:0];
 
   wire [23:0] cal_prod = tp_m * {8'd0, k_cal};      // 16 x 8
 
@@ -369,8 +384,30 @@ module mom_cost_engine
   //
   // lambda_sh[3] is the enable: PWR_MAX zeroes the energy term entirely and
   // the objective reduces to pure latency minimization.
-  wire [32:0] e_sum_w = lambda_sh[3] ? ({1'b0, e_ops_sc} + {1'b0, e_mem_sc})
-                                     : 33'd0;
+  // ---------------------------------------------------------------------------
+  // THE PIPELINE REGISTER (session 144). Everything above is stage A
+  // (features -> t_pred and the raw energy terms). Everything below is
+  // stage B (calibration multiply and barrel shift, energy sum, saturate).
+  // ---------------------------------------------------------------------------
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      t_pred_q <= '0; e_ops_q <= '0; e_mem_q <= '0;
+      valid_q <= 1'b0; capable_q <= 1'b0; lambda_q <= '0;
+    end else if (adv) begin
+      t_pred_q  <= t_pred_a;
+      e_ops_q   <= e_ops_sc;
+      e_mem_q   <= e_mem_sc;
+      valid_q   <= valid_a;
+      capable_q <= capable_a;
+      lambda_q  <= lambda_sh;
+    end
+  end
+  assign t_pred  = t_pred_q;
+  assign valid   = valid_q;
+  assign capable = capable_q;
+
+  wire [32:0] e_sum_w = lambda_q[3] ? ({1'b0, e_ops_q} + {1'b0, e_mem_q})
+                                    : 33'd0;
   wire [31:0] e_scaled = e_sum_w[32] ? COST_SAT : e_sum_w[31:0];
 
   wire [COST_W:0] j_sum = {1'b0, t_cal} + {1'b0, e_scaled};
