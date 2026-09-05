@@ -320,23 +320,39 @@ async def test_tag_exhaustion_and_recovery(dut):
     assert s["busy"], "busy low with every tag in flight"
     assert s["ready"], "pipeline empty, so the tile should still accept one descriptor"
 
-    # The ninth: accepted into the pipeline, not dispatched, and now the tile
-    # says so on the pin.
-    await shift_and_go(dut, desc)
-    s = decode_status(dut)
-    assert not s["dispatched"], "dispatched with no free tag"
-    assert not s["unsupported"], "a stalled descriptor was reported as unsupported"
-    assert not s["ready"], "ready still high with a descriptor held and no tag free"
+    # With every tag in flight, keep offering descriptors until the tile
+    # stops accepting. The pipeline holds a few (three stages since session
+    # 144: features, cost-engine mid-register, cost register); the CONTRACT
+    # is depth-agnostic: nothing is dropped, `ready` falls when the pipeline
+    # is full, and none of the held descriptors dispatches without a tag.
+    held = 0
+    for _ in range(8):
+        if not decode_status(dut)["ready"]:
+            break
+        await shift_and_go(dut, desc)
+        held += 1
+        s = decode_status(dut)
+        assert not s["dispatched"], "dispatched with no free tag"
+        assert not s["unsupported"], "a stalled descriptor was reported as unsupported"
+    assert 1 <= held <= 4, f"pipeline held {held} descriptors; expected 1..4"
+    assert not decode_status(dut)["ready"], "ready still high with the pipeline full and no tag free"
 
-    # Retire one tag: the held descriptor must dispatch BY ITSELF with it.
+    # Retire one tag: a held descriptor must dispatch BY ITSELF with it.
     await retire(dut, seen[3])
     s = decode_status(dut)
     assert s["dispatched"] and s["tag"] == seen[3], \
         f"held descriptor did not dispatch with the freed tag {seen[3]}: {s}"
-    assert s["ready"], "ready did not return after the held descriptor dispatched"
 
-    for t in range(NTAG):
-        await retire(dut, t)
+    # Drain everything. The status pins expose only the LAST dispatched tag,
+    # not the set of busy ones, so retire all tags round-robin; each pass
+    # frees tags that held descriptors immediately re-take, and a few passes
+    # empty the pipeline. (Retiring an already-free tag raises `stale`, which
+    # is the documented behaviour and harmless here.)
+    for _ in range(4):
+        if not decode_status(dut)["busy"]:
+            break
+        for t in range(NTAG):
+            await retire(dut, t)
     s = decode_status(dut)
     assert not s["busy"] and s["ready"], f"not idle after retiring everything: {s}"
 

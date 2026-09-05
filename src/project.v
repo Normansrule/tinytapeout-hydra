@@ -153,6 +153,9 @@ endmodule
 `default_nettype wire
 `default_nettype none
 module mom_cost_engine (
+	clk,
+	rst_n,
+	adv,
 	log2_w,
 	bytes_q,
 	log2_i,
@@ -174,6 +177,9 @@ module mom_cost_engine (
 );
 	reg _sv2v_0;
 	parameter [2:0] ENGINE_ID = 3'd0;
+	input wire clk;
+	input wire rst_n;
+	input wire adv;
 	input wire [7:0] log2_w;
 	input wire [23:0] bytes_q;
 	input wire signed [8:0] log2_i;
@@ -205,8 +211,8 @@ module mom_cost_engine (
 		mom_pkg_opc_ok = (mask >> oc) & 1'b1;
 	endfunction
 	wire opc_supported = mom_pkg_opc_ok(param[8-:9], op_class);
-	assign capable = dt_supported && opc_supported;
-	assign valid = capable && !engine_busy_full;
+	wire capable_a = dt_supported && opc_supported;
+	wire valid_a = capable_a && !engine_busy_full;
 	wire signed [9:0] bw_bound_s = log2_i + $signed({6'd0, param[26-:4]});
 	wire [3:0] bw_bound = (bw_bound_s <= 0 ? 4'd0 : (bw_bound_s >= 15 ? 4'd15 : bw_bound_s[3:0]));
 	wire [3:0] lg_p_att = (bw_bound < param[42-:4] ? bw_bound : param[42-:4]);
@@ -220,19 +226,25 @@ module mom_cost_engine (
 	wire [1:0] setup_sh = (lat_hint == 2'd3 ? 2'd2 : (lat_hint == 2'd2 ? 2'd1 : 2'd0));
 	wire [39:0] t_setup_w = {28'd0, param[38-:12]} << setup_sh;
 	wire [39:0] t_sum_w = (({8'd0, t_compute} + t_setup_w) + {8'd0, t_move}) + {32'd0, queue_depth};
-	assign t_pred = (t_sum_w > 40'h00ffff0000 ? mom_pkg_COST_SAT : t_sum_w[31:0]);
+	wire [31:0] t_pred_a = (t_sum_w > 40'h00ffff0000 ? mom_pkg_COST_SAT : t_sum_w[31:0]);
+	reg [31:0] t_pred_q;
+	reg [31:0] e_ops_q;
+	reg [31:0] e_mem_q;
+	reg valid_q;
+	reg capable_q;
+	reg [3:0] lambda_q;
 	reg [4:0] tp_e;
 	always @(*) begin
 		if (_sv2v_0)
 			;
-		if (t_pred[31:16] != 16'd0)
+		if (t_pred_q[31:16] != 16'd0)
 			tp_e = 5'd16;
-		else if (t_pred[15:8] != 8'd0)
+		else if (t_pred_q[15:8] != 8'd0)
 			tp_e = 5'd8;
 		else
 			tp_e = 5'd0;
 	end
-	wire [15:0] tp_m = (tp_e == 5'd16 ? t_pred[31:16] : (tp_e == 5'd8 ? t_pred[23:8] : t_pred[15:0]));
+	wire [15:0] tp_m = (tp_e == 5'd16 ? t_pred_q[31:16] : (tp_e == 5'd8 ? t_pred_q[23:8] : t_pred_q[15:0]));
 	wire [23:0] cal_prod = tp_m * {8'd0, k_cal};
 	localparam [31:0] mom_pkg_KCAL_SHIFT = 6;
 	function automatic [6:0] sv2v_cast_7;
@@ -253,7 +265,27 @@ module mom_cost_engine (
 	wire mem_pos = ~mem_sh_s[7];
 	wire [5:0] mem_mag = (mem_pos ? mem_sh_s[5:0] : ~mem_sh_s[5:0] + 6'd1);
 	wire [31:0] e_mem_sc = (mem_pos ? {4'd0, e_mem_raw} << mem_mag : {4'd0, e_mem_raw} >> mem_mag);
-	wire [32:0] e_sum_w = (lambda_sh[3] ? {1'b0, e_ops_sc} + {1'b0, e_mem_sc} : 33'd0);
+	always @(posedge clk or negedge rst_n)
+		if (!rst_n) begin
+			t_pred_q <= 1'sb0;
+			e_ops_q <= 1'sb0;
+			e_mem_q <= 1'sb0;
+			valid_q <= 1'b0;
+			capable_q <= 1'b0;
+			lambda_q <= 1'sb0;
+		end
+		else if (adv) begin
+			t_pred_q <= t_pred_a;
+			e_ops_q <= e_ops_sc;
+			e_mem_q <= e_mem_sc;
+			valid_q <= valid_a;
+			capable_q <= capable_a;
+			lambda_q <= lambda_sh;
+		end
+	assign t_pred = t_pred_q;
+	assign valid = valid_q;
+	assign capable = capable_q;
+	wire [32:0] e_sum_w = (lambda_q[3] ? {1'b0, e_ops_q} + {1'b0, e_mem_q} : 33'd0);
 	wire [31:0] e_scaled = (e_sum_w[32] ? mom_pkg_COST_SAT : e_sum_w[31:0]);
 	wire [mom_pkg_COST_W:0] j_sum = {1'b0, t_cal} + {1'b0, e_scaled};
 	always @(*) begin
@@ -752,6 +784,11 @@ module mom_top (
 	wire [(mom_pkg_ENG_N * mom_pkg_COST_W) - 1:0] t_pred;
 	wire [4:0] cvalid;
 	genvar _gv_e_6;
+	reg a_valid;
+	wire c_ready;
+	reg c_valid;
+	wire c_accept = !c_valid || c_ready;
+	wire a_adv = !a_valid || c_accept;
 	wire [4:0] ccapable;
 	function automatic [3:0] mom_pkg_lambda_sh_of;
 		input reg [1:0] h;
@@ -771,6 +808,9 @@ module mom_top (
 		for (_gv_e_6 = 0; _gv_e_6 < mom_pkg_ENG_N; _gv_e_6 = _gv_e_6 + 1) begin : g_cost
 			localparam e = _gv_e_6;
 			mom_cost_engine #(.ENGINE_ID(sv2v_cast_3(e))) u_ce(
+				.clk(clk),
+				.rst_n(rst_n),
+				.adv(a_adv),
 				.log2_w(f_lg_w),
 				.bytes_q(f_wd[68-:24]),
 				.log2_i(f_lg_i),
@@ -792,21 +832,56 @@ module mom_top (
 			);
 		end
 	endgenerate
+	reg [(mom_pkg_ENG_N * mom_pkg_COST_W) - 1:0] cost_q;
+	reg [(mom_pkg_ENG_N * mom_pkg_COST_W) - 1:0] t_pred_q;
+	reg [4:0] cvalid_q;
+	reg [4:0] ccapable_q;
+	reg [127:0] c_wd;
+	reg [127:0] a_wd;
+	always @(posedge clk or negedge rst_n)
+		if (!rst_n) begin
+			a_valid <= 1'b0;
+			a_wd <= 1'sb0;
+		end
+		else if (a_adv) begin
+			a_valid <= f_valid;
+			if (f_valid)
+				a_wd <= f_wd;
+		end
+	always @(posedge clk or negedge rst_n)
+		if (!rst_n) begin
+			c_valid <= 1'b0;
+			cost_q <= 1'sb0;
+			t_pred_q <= 1'sb0;
+			cvalid_q <= 1'sb0;
+			ccapable_q <= 1'sb0;
+			c_wd <= 1'sb0;
+		end
+		else if (c_accept) begin
+			c_valid <= a_valid;
+			if (a_valid) begin
+				cost_q <= cost;
+				t_pred_q <= t_pred;
+				cvalid_q <= cvalid;
+				ccapable_q <= ccapable;
+				c_wd <= a_wd;
+			end
+		end
 	wire [2:0] sel_eng;
 	wire [31:0] sel_cost;
 	wire sel_ok;
 	wire sel_capable;
 	mom_select u_sel(
-		.cost(cost),
-		.valid(cvalid),
-		.capable(ccapable),
+		.cost(cost_q),
+		.valid(cvalid_q),
+		.capable(ccapable_q),
 		.sel_engine(sel_eng),
 		.sel_cost(sel_cost),
 		.any_valid(sel_ok),
 		.any_capable(sel_capable),
 		.sel_margin(obs_margin)
 	);
-	wire unsupported = f_valid && !sel_capable;
+	wire unsupported = c_valid && !sel_capable;
 	always @(posedge clk or negedge rst_n)
 		if (!rst_n) begin
 			err_unsupported <= 1'b0;
@@ -815,7 +890,7 @@ module mom_top (
 		else begin
 			err_unsupported <= unsupported;
 			if (unsupported)
-				err_tag <= f_wd[42-:8];
+				err_tag <= c_wd[42-:8];
 		end
 	wire sb_ready;
 	mom_scoreboard #(
@@ -824,11 +899,11 @@ module mom_top (
 	) u_sb(
 		.clk(clk),
 		.rst_n(rst_n),
-		.disp_valid((f_valid && sel_ok) && disp_accept),
+		.disp_valid((c_valid && sel_ok) && disp_accept),
 		.disp_ready(sb_ready),
 		.disp_engine(sel_eng),
-		.disp_opclass(f_wd[127-:4]),
-		.disp_t_pred(t_pred[sel_eng * mom_pkg_COST_W+:mom_pkg_COST_W]),
+		.disp_opclass(c_wd[127-:4]),
+		.disp_t_pred(t_pred_q[sel_eng * mom_pkg_COST_W+:mom_pkg_COST_W]),
 		.disp_tag(disp_tag),
 		.comp_valid(comp_valid),
 		.comp_tag(comp_tag),
@@ -844,10 +919,11 @@ module mom_top (
 		.err_stale_comp(err_stale_comp),
 		.tag_busy_vec(obs_tag_busy)
 	);
-	assign disp_valid = (f_valid && sel_ok) && sb_ready;
+	assign disp_valid = (c_valid && sel_ok) && sb_ready;
 	assign disp_engine = sel_eng;
-	assign disp_wd = f_wd;
-	assign f_ready = (disp_valid && disp_accept) || unsupported;
+	assign disp_wd = c_wd;
+	assign c_ready = (disp_valid && disp_accept) || unsupported;
+	assign f_ready = a_adv;
 endmodule
 `default_nettype wire
 `default_nettype none
