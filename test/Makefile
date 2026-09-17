@@ -18,6 +18,6 @@ endif
 
 VERILOG_SOURCES += $(PWD)/tb.v
 TOPLEVEL = tb
-COCOTB_TEST_MODULES = test   # cocotb 2.x name (MODULE is deprecated)
+COCOTB_TEST_MODULES = test,test_regs   # legacy personality, register personality
 
 include $(shell cocotb-config --makefiles)/Makefile.sim

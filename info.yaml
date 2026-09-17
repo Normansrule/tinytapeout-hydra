@@ -59,7 +59,7 @@ project:
   title:        "TinyTapeout-Hydra"
   author:       "Aleksander J. Norman"
   discord:      ""
-  description:  "Hardware dispatch across five compute engines in three cycles, using a roofline cost model that calibrates itself online from measured completion times."
+  description:  "Hardware dispatch across five compute engines in three cycles, using a roofline cost model that calibrates itself online from measured completion times. Two personalities: the v1 serial pin interface, or an SPI register map reaching the whole dispatcher including live retuning of the cost model."
   language:     "SystemVerilog"
   # 25 MHz. The 20 MHz below was the pre-PAR estimate; the real harden
   # (session 139) failed setup at 20 ns and closes at 55 ns == ~18 MHz (OpenSTA measured 46.56 ns reg-to-reg).
@@ -89,21 +89,21 @@ project:
 
 # Pin map. See src/tt_um_hydra_mom.sv for the protocol.
 pinout:
-  ui[0]: "sdi - serial descriptor data, MSB first"
-  ui[1]: "shift - shift sdi into the descriptor register"
-  ui[2]: "go - present the descriptor and latch the result (edge detected)"
-  ui[3]: "comp - pulse a completion for the tag on ui[7:4] (edge detected)"
-  ui[4]: "comp_tag[0]"
-  ui[5]: "comp_tag[1]"
-  ui[6]: "comp_tag[2]"
-  ui[7]: "comp_tag[3]"
+  ui[0]: "LEGACY sdi - serial descriptor data, MSB first / REGISTER SCK"
+  ui[1]: "LEGACY shift - shift sdi into the descriptor register / REGISTER COPI"
+  ui[2]: "LEGACY go - present the descriptor (edge detected) / REGISTER CSn"
+  ui[3]: "LEGACY comp - pulse a completion for the tag on ui[7:4]"
+  ui[4]: "LEGACY comp_tag[0] / strap at reset: hold ui[7:4]=0xA for REGISTER"
+  ui[5]: "LEGACY comp_tag[1] / strap at reset"
+  ui[6]: "LEGACY comp_tag[2] / strap at reset"
+  ui[7]: "LEGACY comp_tag[3] / strap at reset"
 
-  uo[0]: "engine[0] - selected engine index"
-  uo[1]: "engine[1]"
-  uo[2]: "engine[2]"
-  uo[3]: "dispatched - a dispatch occurred for the last go"
-  uo[4]: "unsupported - no engine could ever execute that descriptor"
-  uo[5]: "stale - a completion arrived for a tag not in flight (sticky)"
+  uo[0]: "LEGACY engine[0] / REGISTER CIPO"
+  uo[1]: "LEGACY engine[1] / REGISTER irq (any sticky flag set)"
+  uo[2]: "LEGACY engine[2] / REGISTER engine[0]"
+  uo[3]: "LEGACY dispatched / REGISTER engine[1]"
+  uo[4]: "LEGACY unsupported / REGISTER engine[2]"
+  uo[5]: "LEGACY stale (sticky) / REGISTER dispatched"
   uo[6]: "any_busy - at least one tag outstanding"
   uo[7]: "ready - the MOM can accept a descriptor"
 
@@ -111,7 +111,7 @@ pinout:
   uio[1]: "tag[1]"
   uio[2]: "tag[2]"
   uio[3]: "tag[3]"
-  uio[4]: "margin[0] - runner-up margin, top nibble, saturated"
+  uio[4]: "margin[0] - runner-up margin: LEGACY saturated top nibble, REGISTER log2 scale"
   uio[5]: "margin[1]"
   uio[6]: "margin[2]"
   uio[7]: "margin[3]"
