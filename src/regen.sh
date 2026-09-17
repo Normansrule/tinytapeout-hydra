@@ -14,4 +14,5 @@ D="$(cd "$(dirname "$0")" && pwd)"
 sv2v "$D/rtl/mom_pkg.sv" "$D/rtl/mom_features.sv" "$D/rtl/mom_param_rom.sv" \
      "$D/rtl/mom_cost_engine.sv" "$D/rtl/mom_calibrate.sv" \
      "$D/rtl/mom_select.sv" "$D/rtl/mom_scoreboard.sv" "$D/rtl/mom_top.sv" \
+     "$D/rtl/hydra_tt_spi.sv" "$D/rtl/hydra_tt_regs.sv" \
      "$D/tt_um_hydra_mom.sv"

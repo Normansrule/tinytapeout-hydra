@@ -927,6 +927,482 @@ module mom_top (
 endmodule
 `default_nettype wire
 `default_nettype none
+module hydra_tt_spi (
+	clk,
+	rst_n,
+	sck_i,
+	copi_i,
+	csn_i,
+	cipo_o,
+	cs_start,
+	cs_end,
+	cs_active,
+	rx_valid,
+	rx_byte,
+	rx_index,
+	tx_load,
+	tx_byte
+);
+	input wire clk;
+	input wire rst_n;
+	input wire sck_i;
+	input wire copi_i;
+	input wire csn_i;
+	output wire cipo_o;
+	output reg cs_start;
+	output reg cs_end;
+	output wire cs_active;
+	output reg rx_valid;
+	output reg [7:0] rx_byte;
+	output reg [4:0] rx_index;
+	output reg tx_load;
+	input wire [7:0] tx_byte;
+	reg [2:0] sck_s;
+	reg [2:0] csn_s;
+	reg [1:0] copi_s;
+	always @(posedge clk or negedge rst_n)
+		if (!rst_n) begin
+			sck_s <= 3'b000;
+			csn_s <= 3'b111;
+			copi_s <= 2'b00;
+		end
+		else begin
+			sck_s <= {sck_s[1:0], sck_i};
+			csn_s <= {csn_s[1:0], csn_i};
+			copi_s <= {copi_s[0], copi_i};
+		end
+	wire sck_rise = sck_s[2:1] == 2'b01;
+	wire sck_fall = sck_s[2:1] == 2'b10;
+	wire cs_fall = csn_s[2:1] == 2'b10;
+	wire cs_rise = csn_s[2:1] == 2'b01;
+	wire copi_b = copi_s[1];
+	assign cs_active = ~csn_s[1];
+	reg [2:0] bitcnt;
+	reg [6:0] rx_sr;
+	reg boundary;
+	reg [4:0] byte_cnt;
+	reg [7:0] tx_sr;
+	assign cipo_o = tx_sr[7];
+	always @(posedge clk or negedge rst_n)
+		if (!rst_n) begin
+			bitcnt <= 3'd0;
+			rx_sr <= 7'd0;
+			rx_byte <= 8'd0;
+			rx_valid <= 1'b0;
+			rx_index <= 5'd0;
+			byte_cnt <= 5'd0;
+			boundary <= 1'b0;
+			tx_sr <= 8'd0;
+			tx_load <= 1'b0;
+			cs_start <= 1'b0;
+			cs_end <= 1'b0;
+		end
+		else begin
+			rx_valid <= 1'b0;
+			tx_load <= 1'b0;
+			cs_start <= cs_fall;
+			cs_end <= cs_rise;
+			if (cs_fall) begin
+				bitcnt <= 3'd0;
+				byte_cnt <= 5'd0;
+				boundary <= 1'b0;
+				tx_load <= 1'b1;
+			end
+			else if (cs_active) begin
+				if (sck_rise) begin
+					rx_sr <= {rx_sr[5:0], copi_b};
+					bitcnt <= bitcnt + 3'd1;
+					if (bitcnt == 3'd7) begin
+						rx_byte <= {rx_sr, copi_b};
+						rx_valid <= 1'b1;
+						rx_index <= byte_cnt;
+						if (byte_cnt != 5'd31)
+							byte_cnt <= byte_cnt + 5'd1;
+						boundary <= 1'b1;
+					end
+				end
+				else if (sck_fall) begin
+					if (boundary) begin
+						boundary <= 1'b0;
+						tx_load <= 1'b1;
+					end
+					else
+						tx_sr <= {tx_sr[6:0], 1'b0};
+				end
+			end
+			if (tx_load)
+				tx_sr <= tx_byte;
+		end
+endmodule
+`default_nettype wire
+`default_nettype none
+module hydra_tt_regs (
+	clk,
+	rst_n,
+	cs_start,
+	cs_end,
+	rx_valid,
+	rx_byte,
+	rx_index,
+	tx_load,
+	tx_byte,
+	wd_valid,
+	wd_ready,
+	wd,
+	disp_valid,
+	disp_accept,
+	disp_engine,
+	disp_tag,
+	disp_wd,
+	comp_valid,
+	comp_tag,
+	fence_tag,
+	fence_busy,
+	csr_wr,
+	csr_priv,
+	csr_engine,
+	csr_data,
+	csr_bw_dma_log2,
+	csr_eps_mem,
+	csr_e_shift,
+	csr_cal_freeze,
+	csr_cal_reset,
+	err_unsupported,
+	err_tag,
+	err_stale_comp,
+	obs_margin,
+	obs_cal_updates,
+	obs_tag_busy,
+	irq,
+	last_engine,
+	disp_sticky,
+	last_tag,
+	margin_nib
+);
+	reg _sv2v_0;
+	parameter [31:0] NTAG = 8;
+	input wire clk;
+	input wire rst_n;
+	input wire cs_start;
+	input wire cs_end;
+	input wire rx_valid;
+	input wire [7:0] rx_byte;
+	input wire [4:0] rx_index;
+	input wire tx_load;
+	output reg [7:0] tx_byte;
+	output wire wd_valid;
+	input wire wd_ready;
+	localparam [31:0] mom_pkg_WD_W = 128;
+	output wire [127:0] wd;
+	input wire disp_valid;
+	output wire disp_accept;
+	input wire [2:0] disp_engine;
+	input wire [3:0] disp_tag;
+	input wire [127:0] disp_wd;
+	output reg comp_valid;
+	output reg [3:0] comp_tag;
+	output wire [3:0] fence_tag;
+	input wire fence_busy;
+	output reg csr_wr;
+	output wire csr_priv;
+	output reg [2:0] csr_engine;
+	localparam [31:0] mom_pkg_EPARAM_W = 43;
+	output reg [42:0] csr_data;
+	output wire [3:0] csr_bw_dma_log2;
+	output wire [3:0] csr_eps_mem;
+	output wire [3:0] csr_e_shift;
+	output wire csr_cal_freeze;
+	output wire csr_cal_reset;
+	input wire err_unsupported;
+	input wire [7:0] err_tag;
+	input wire err_stale_comp;
+	localparam [31:0] mom_pkg_COST_W = 32;
+	input wire [31:0] obs_margin;
+	input wire [15:0] obs_cal_updates;
+	input wire [NTAG - 1:0] obs_tag_busy;
+	output wire irq;
+	output wire [2:0] last_engine;
+	output wire disp_sticky;
+	output wire [3:0] last_tag;
+	output wire [3:0] margin_nib;
+	localparam [6:0] A_ID = 7'h00;
+	localparam [6:0] A_WD = 7'h01;
+	localparam [6:0] A_CTRL = 7'h02;
+	localparam [6:0] A_ACTION = 7'h03;
+	localparam [6:0] A_COMP = 7'h04;
+	localparam [6:0] A_STATUS = 7'h05;
+	localparam [6:0] A_RESULT = 7'h06;
+	localparam [6:0] A_LASTWD = 7'h07;
+	localparam [6:0] A_CALUPD = 7'h08;
+	localparam [6:0] A_BUSY = 7'h09;
+	localparam [6:0] A_FENCE = 7'h0a;
+	localparam [6:0] A_PARAM = 7'h0b;
+	localparam [6:0] A_GLOBAL = 7'h0c;
+	localparam [6:0] A_INFO = 7'h0d;
+	localparam [31:0] ID_VALUE = 32'h48594d32;
+	function automatic [4:0] reg_len;
+		input reg [6:0] a;
+		case (a)
+			A_ID: reg_len = 5'd4;
+			A_WD: reg_len = 5'd16;
+			A_CTRL: reg_len = 5'd1;
+			A_ACTION: reg_len = 5'd1;
+			A_COMP: reg_len = 5'd1;
+			A_STATUS: reg_len = 5'd2;
+			A_RESULT: reg_len = 5'd6;
+			A_LASTWD: reg_len = 5'd16;
+			A_CALUPD: reg_len = 5'd2;
+			A_BUSY: reg_len = 5'd2;
+			A_FENCE: reg_len = 5'd1;
+			A_PARAM: reg_len = 5'd6;
+			A_GLOBAL: reg_len = 5'd2;
+			A_INFO: reg_len = 5'd1;
+			default: reg_len = 5'd0;
+		endcase
+	endfunction
+	function automatic writable;
+		input reg [6:0] a;
+		writable = ((((((a == A_WD) || (a == A_CTRL)) || (a == A_ACTION)) || (a == A_COMP)) || (a == A_FENCE)) || (a == A_PARAM)) || (a == A_GLOBAL);
+	endfunction
+	reg have_cmd;
+	reg cmd_rd;
+	reg [6:0] cmd_addr;
+	reg [4:0] n_data;
+	reg [47:0] wbuf;
+	reg [127:0] wd_q;
+	reg wd_ok;
+	reg hold_q;
+	reg cal_freeze_q;
+	reg cal_reset_q;
+	reg param_lock_q;
+	reg [3:0] fence_q;
+	reg [11:0] global_q;
+	reg pending_q;
+	reg s_disp;
+	reg s_unsupp;
+	reg s_stale;
+	reg s_frame;
+	reg s_goerr;
+	reg [2:0] r_engine;
+	reg [3:0] r_tag;
+	reg [31:0] r_margin;
+	reg [7:0] r_errtag;
+	reg [127:0] r_lastwd;
+	wire dispatched = disp_valid & disp_accept;
+	wire frame_ok = ((have_cmd && !cmd_rd) && writable(cmd_addr)) && (n_data == reg_len(cmd_addr));
+	wire frame_bad = (have_cmd && !cmd_rd) && !frame_ok;
+	wire commit = cs_end && frame_ok;
+	wire [7:0] w8 = wbuf[7:0];
+	wire do_go = (commit && (cmd_addr == A_ACTION)) && w8[0];
+	wire do_clear = (commit && (cmd_addr == A_ACTION)) && w8[1];
+	wire go_accept = (do_go && wd_ok) && !pending_q;
+	always @(posedge clk or negedge rst_n)
+		if (!rst_n) begin
+			have_cmd <= 1'b0;
+			cmd_rd <= 1'b0;
+			cmd_addr <= 7'd0;
+			n_data <= 5'd0;
+			wbuf <= 48'd0;
+			wd_q <= 1'sb0;
+			wd_ok <= 1'b0;
+			hold_q <= 1'b0;
+			cal_freeze_q <= 1'b0;
+			cal_reset_q <= 1'b0;
+			param_lock_q <= 1'b0;
+			fence_q <= 4'd0;
+			global_q <= 12'h4c8;
+			pending_q <= 1'b0;
+			comp_valid <= 1'b0;
+			comp_tag <= 4'd0;
+			csr_wr <= 1'b0;
+			csr_engine <= 3'd0;
+			csr_data <= 1'sb0;
+			s_disp <= 1'b0;
+			s_unsupp <= 1'b0;
+			s_stale <= 1'b0;
+			s_frame <= 1'b0;
+			s_goerr <= 1'b0;
+			r_engine <= 3'd0;
+			r_tag <= 4'd0;
+			r_margin <= 1'sb0;
+			r_errtag <= 8'd0;
+			r_lastwd <= 1'sb0;
+		end
+		else begin
+			comp_valid <= 1'b0;
+			csr_wr <= 1'b0;
+			if (cs_start) begin
+				have_cmd <= 1'b0;
+				n_data <= 5'd0;
+			end
+			if (rx_valid) begin
+				if (rx_index == 5'd0) begin
+					have_cmd <= 1'b1;
+					cmd_rd <= rx_byte[7];
+					cmd_addr <= rx_byte[6:0];
+					if (!rx_byte[7] && (rx_byte[6:0] == A_WD))
+						wd_ok <= 1'b0;
+				end
+				else if (have_cmd) begin
+					if (n_data != 5'd31)
+						n_data <= n_data + 5'd1;
+					if (!cmd_rd) begin
+						if (cmd_addr == A_WD)
+							wd_q <= {wd_q[119:0], rx_byte};
+						else
+							wbuf <= {wbuf[39:0], rx_byte};
+					end
+				end
+			end
+			if (cs_end) begin
+				have_cmd <= 1'b0;
+				if (frame_bad)
+					s_frame <= 1'b1;
+			end
+			if (commit)
+				case (cmd_addr)
+					A_WD: wd_ok <= 1'b1;
+					A_CTRL: begin
+						hold_q <= w8[0];
+						cal_freeze_q <= w8[1];
+						cal_reset_q <= w8[2];
+						param_lock_q <= param_lock_q | w8[3];
+					end
+					A_COMP: begin
+						comp_valid <= 1'b1;
+						comp_tag <= w8[3:0];
+					end
+					A_FENCE: fence_q <= w8[3:0];
+					A_GLOBAL: global_q <= wbuf[11:0];
+					A_PARAM:
+						if (!param_lock_q) begin
+							csr_wr <= 1'b1;
+							csr_engine <= wbuf[45:43];
+							csr_data <= wbuf[42:0];
+						end
+					default:
+						;
+				endcase
+			if (pending_q && wd_ready)
+				pending_q <= 1'b0;
+			if (go_accept) begin
+				pending_q <= 1'b1;
+				s_disp <= 1'b0;
+				s_unsupp <= 1'b0;
+			end
+			if (do_go && !go_accept)
+				s_goerr <= 1'b1;
+			if (dispatched) begin
+				r_engine <= disp_engine;
+				r_tag <= disp_tag;
+				r_margin <= obs_margin;
+				r_lastwd <= disp_wd;
+				s_disp <= 1'b1;
+			end
+			if (err_unsupported) begin
+				s_unsupp <= 1'b1;
+				r_errtag <= err_tag;
+			end
+			if (err_stale_comp)
+				s_stale <= 1'b1;
+			if (do_clear) begin
+				s_disp <= 1'b0;
+				s_unsupp <= 1'b0;
+				s_stale <= 1'b0;
+				s_frame <= 1'b0;
+				s_goerr <= 1'b0;
+			end
+		end
+	assign wd_valid = pending_q;
+	assign wd = wd_q;
+	assign disp_accept = ~hold_q;
+	assign fence_tag = fence_q;
+	assign csr_priv = 1'b1;
+	assign csr_bw_dma_log2 = global_q[11:8];
+	assign csr_eps_mem = global_q[7:4];
+	assign csr_e_shift = global_q[3:0];
+	assign csr_cal_freeze = cal_freeze_q;
+	assign csr_cal_reset = cal_reset_q;
+	wire any_busy = |obs_tag_busy;
+	wire [15:0] status_w = {wd_ready, any_busy, pending_q, wd_ok, s_disp, s_unsupp, s_stale, s_frame, s_goerr, fence_busy, param_lock_q, hold_q, cal_freeze_q, cal_reset_q, 2'b00};
+	reg [15:0] busy16;
+	always @(*) begin
+		if (_sv2v_0)
+			;
+		busy16 = 16'd0;
+		busy16[NTAG - 1:0] = obs_tag_busy;
+	end
+	reg [127:0] rval;
+	function automatic [127:0] sv2v_cast_D3020;
+		input reg [127:0] inp;
+		sv2v_cast_D3020 = inp;
+	endfunction
+	function automatic [7:0] sv2v_cast_8;
+		input reg [7:0] inp;
+		sv2v_cast_8 = inp;
+	endfunction
+	always @(*) begin
+		if (_sv2v_0)
+			;
+		case (cmd_addr)
+			A_ID: rval = sv2v_cast_D3020(ID_VALUE);
+			A_WD: rval = wd_q;
+			A_CTRL: rval = sv2v_cast_D3020({param_lock_q, cal_reset_q, cal_freeze_q, hold_q});
+			A_STATUS: rval = sv2v_cast_D3020(status_w);
+			A_RESULT: rval = sv2v_cast_D3020({r_engine, r_tag, 1'b0, r_margin, r_errtag});
+			A_LASTWD: rval = r_lastwd;
+			A_CALUPD: rval = sv2v_cast_D3020(obs_cal_updates);
+			A_BUSY: rval = sv2v_cast_D3020(busy16);
+			A_FENCE: rval = sv2v_cast_D3020(fence_q);
+			A_GLOBAL: rval = sv2v_cast_D3020(global_q);
+			A_INFO: rval = sv2v_cast_D3020(sv2v_cast_8(NTAG));
+			default: rval = 1'sb0;
+		endcase
+	end
+	wire [4:0] len = reg_len(cmd_addr);
+	wire [4:0] k = n_data;
+	function automatic [6:0] sv2v_cast_7;
+		input reg [6:0] inp;
+		sv2v_cast_7 = inp;
+	endfunction
+	wire [6:0] sh = sv2v_cast_7((len - 5'd1) - k) * 7'd8;
+	wire in_rng = (have_cmd && cmd_rd) && (k < len);
+	always @(*) begin
+		if (_sv2v_0)
+			;
+		if (!have_cmd)
+			tx_byte = status_w[15:8];
+		else if (in_rng)
+			tx_byte = rval[sh+:8];
+		else
+			tx_byte = 8'h00;
+	end
+	wire _unused = &{tx_load, 1'b0};
+	assign irq = (((s_disp | s_unsupp) | s_stale) | s_frame) | s_goerr;
+	assign last_engine = r_engine;
+	assign disp_sticky = s_disp;
+	assign last_tag = r_tag;
+	reg [3:0] mlog;
+	function automatic signed [3:0] sv2v_cast_4_signed;
+		input reg signed [3:0] inp;
+		sv2v_cast_4_signed = inp;
+	endfunction
+	always @(*) begin
+		if (_sv2v_0)
+			;
+		mlog = 4'd0;
+		begin : sv2v_autoblock_1
+			reg signed [31:0] b;
+			for (b = 0; b < mom_pkg_COST_W; b = b + 1)
+				if (r_margin[b])
+					mlog = (b >= 14 ? 4'd15 : sv2v_cast_4_signed(b + 1));
+		end
+	end
+	assign margin_nib = mlog;
+	initial _sv2v_0 = 0;
+endmodule
+`default_nettype wire
+`default_nettype none
 module tt_um_hydra_mom (
 	ui_in,
 	uo_out,
@@ -945,7 +1421,12 @@ module tt_um_hydra_mom (
 	input wire ena;
 	input wire clk;
 	input wire rst_n;
+	localparam [31:0] NTAG = 8;
 	wire _unused = &{ena, uio_in, 1'b0};
+	reg reg_mode;
+	always @(posedge clk)
+		if (!rst_n)
+			reg_mode <= ui_in[7:4] == 4'ha;
 	wire sdi = ui_in[0];
 	wire shift = ui_in[1];
 	wire go = ui_in[2];
@@ -956,22 +1437,67 @@ module tt_um_hydra_mom (
 	always @(posedge clk or negedge rst_n)
 		if (!rst_n)
 			sr <= 1'sb0;
-		else if (shift)
+		else if (!reg_mode && shift)
 			sr <= {sr[126:0], sdi};
 	reg go_q;
-	always @(posedge clk or negedge rst_n)
-		if (!rst_n)
-			go_q <= 1'b0;
-		else
-			go_q <= go;
-	wire go_pulse = go & ~go_q;
 	reg comp_q;
 	always @(posedge clk or negedge rst_n)
-		if (!rst_n)
+		if (!rst_n) begin
+			go_q <= 1'b0;
 			comp_q <= 1'b0;
-		else
+		end
+		else begin
+			go_q <= go;
 			comp_q <= comp;
-	wire comp_pulse = comp & ~comp_q;
+		end
+	wire go_pulse = (~reg_mode & go) & ~go_q;
+	wire comp_pulse = (~reg_mode & comp) & ~comp_q;
+	wire spi_cipo;
+	wire cs_start;
+	wire cs_end;
+	wire cs_active;
+	wire rx_valid;
+	wire tx_load;
+	wire [7:0] rx_byte;
+	wire [7:0] tx_byte;
+	wire [4:0] rx_index;
+	hydra_tt_spi u_spi(
+		.clk(clk),
+		.rst_n(rst_n),
+		.sck_i(reg_mode & ui_in[0]),
+		.copi_i(reg_mode & ui_in[1]),
+		.csn_i(~reg_mode | ui_in[2]),
+		.cipo_o(spi_cipo),
+		.cs_start(cs_start),
+		.cs_end(cs_end),
+		.cs_active(cs_active),
+		.rx_valid(rx_valid),
+		.rx_byte(rx_byte),
+		.rx_index(rx_index),
+		.tx_load(tx_load),
+		.tx_byte(tx_byte)
+	);
+	wire r_wd_valid;
+	wire r_disp_accept;
+	wire r_comp_valid;
+	wire r_csr_wr;
+	wire r_csr_priv;
+	wire r_cal_freeze;
+	wire r_cal_reset;
+	wire r_irq;
+	wire r_disp_sticky;
+	wire [127:0] r_wd;
+	wire [3:0] r_comp_tag;
+	wire [3:0] r_fence_tag;
+	wire [3:0] r_bw;
+	wire [3:0] r_eps;
+	wire [3:0] r_esh;
+	wire [3:0] r_last_tag;
+	wire [3:0] r_margin_nib;
+	wire [2:0] r_csr_engine;
+	wire [2:0] r_last_engine;
+	localparam [31:0] mom_pkg_EPARAM_W = 43;
+	wire [42:0] r_csr_data;
 	wire disp_valid;
 	wire [2:0] disp_engine;
 	wire [3:0] disp_tag;
@@ -984,38 +1510,82 @@ module tt_um_hydra_mom (
 	wire [7:0] obs_tag_busy;
 	wire [15:0] obs_cal_updates;
 	wire wd_ready;
-	localparam [31:0] mom_pkg_EPARAM_W = 43;
+	wire fence_busy;
+	hydra_tt_regs #(.NTAG(NTAG)) u_regs(
+		.clk(clk),
+		.rst_n(rst_n),
+		.cs_start(cs_start),
+		.cs_end(cs_end),
+		.rx_valid(rx_valid),
+		.rx_byte(rx_byte),
+		.rx_index(rx_index),
+		.tx_load(tx_load),
+		.tx_byte(tx_byte),
+		.wd_valid(r_wd_valid),
+		.wd_ready(wd_ready),
+		.wd(r_wd),
+		.disp_valid(disp_valid),
+		.disp_accept(r_disp_accept),
+		.disp_engine(disp_engine),
+		.disp_tag(disp_tag),
+		.disp_wd(disp_wd),
+		.comp_valid(r_comp_valid),
+		.comp_tag(r_comp_tag),
+		.fence_tag(r_fence_tag),
+		.fence_busy(fence_busy),
+		.csr_wr(r_csr_wr),
+		.csr_priv(r_csr_priv),
+		.csr_engine(r_csr_engine),
+		.csr_data(r_csr_data),
+		.csr_bw_dma_log2(r_bw),
+		.csr_eps_mem(r_eps),
+		.csr_e_shift(r_esh),
+		.csr_cal_freeze(r_cal_freeze),
+		.csr_cal_reset(r_cal_reset),
+		.err_unsupported(err_unsupported),
+		.err_tag(err_tag),
+		.err_stale_comp(err_stale_comp),
+		.obs_margin(obs_margin),
+		.obs_cal_updates(obs_cal_updates),
+		.obs_tag_busy(obs_tag_busy),
+		.irq(r_irq),
+		.last_engine(r_last_engine),
+		.disp_sticky(r_disp_sticky),
+		.last_tag(r_last_tag),
+		.margin_nib(r_margin_nib)
+	);
+	wire disp_accept = (reg_mode ? r_disp_accept : 1'b1);
 	function automatic [127:0] sv2v_cast_128;
 		input reg [127:0] inp;
 		sv2v_cast_128 = inp;
 	endfunction
 	mom_top #(
-		.NTAG(8),
+		.NTAG(NTAG),
 		.QMAX(4)
 	) u_mom(
 		.clk(clk),
 		.rst_n(rst_n),
-		.wd_valid(go_pulse),
+		.wd_valid((reg_mode ? r_wd_valid : go_pulse)),
 		.wd_ready(wd_ready),
-		.wd(sv2v_cast_128(sr)),
+		.wd(sv2v_cast_128((reg_mode ? r_wd : sr))),
 		.disp_valid(disp_valid),
-		.disp_accept(1'b1),
+		.disp_accept(disp_accept),
 		.disp_engine(disp_engine),
 		.disp_tag(disp_tag),
 		.disp_wd(disp_wd),
-		.comp_valid(comp_pulse),
-		.comp_tag(comp_tag_in),
-		.fence_tag(4'd0),
-		.fence_busy(),
-		.csr_wr(1'b0),
-		.csr_priv(1'b0),
-		.csr_engine(3'd0),
-		.csr_data({mom_pkg_EPARAM_W {1'b0}}),
-		.csr_bw_dma_log2(4'd4),
-		.csr_eps_mem(4'd12),
-		.csr_e_shift(4'd8),
-		.csr_cal_freeze(1'b0),
-		.csr_cal_reset(1'b0),
+		.comp_valid((reg_mode ? r_comp_valid : comp_pulse)),
+		.comp_tag((reg_mode ? r_comp_tag : comp_tag_in)),
+		.fence_tag((reg_mode ? r_fence_tag : 4'd0)),
+		.fence_busy(fence_busy),
+		.csr_wr(reg_mode & r_csr_wr),
+		.csr_priv(reg_mode & r_csr_priv),
+		.csr_engine((reg_mode ? r_csr_engine : 3'd0)),
+		.csr_data((reg_mode ? r_csr_data : {mom_pkg_EPARAM_W {1'b0}})),
+		.csr_bw_dma_log2((reg_mode ? r_bw : 4'd4)),
+		.csr_eps_mem((reg_mode ? r_eps : 4'd12)),
+		.csr_e_shift((reg_mode ? r_esh : 4'd8)),
+		.csr_cal_freeze(reg_mode & r_cal_freeze),
+		.csr_cal_reset(reg_mode & r_cal_reset),
 		.err_unsupported(err_unsupported),
 		.err_tag(err_tag),
 		.err_stale_comp(err_stale_comp),
@@ -1023,42 +1593,45 @@ module tt_um_hydra_mom (
 		.obs_cal_updates(obs_cal_updates),
 		.obs_tag_busy(obs_tag_busy)
 	);
-	reg [2:0] r_engine;
-	reg [3:0] r_tag;
-	reg r_disp;
-	reg r_unsupp;
-	reg [3:0] r_margin;
-	wire [3:0] margin_nib = (obs_margin[31:12] != {20 {1'sb0}} ? 4'hf : obs_margin[15:12]);
+	reg [2:0] l_engine;
+	reg [3:0] l_tag;
+	reg l_disp;
+	reg l_unsupp;
+	reg l_stale;
+	reg [3:0] l_margin;
+	wire [3:0] margin_nib = (obs_margin[31:16] != {16 {1'sb0}} ? 4'hf : obs_margin[15:12]);
 	always @(posedge clk or negedge rst_n)
 		if (!rst_n) begin
-			r_engine <= 3'd0;
-			r_tag <= 4'd0;
-			r_disp <= 1'b0;
-			r_unsupp <= 1'b0;
-			r_margin <= 4'd0;
+			l_engine <= 3'd0;
+			l_tag <= 4'd0;
+			l_disp <= 1'b0;
+			l_unsupp <= 1'b0;
+			l_margin <= 4'd0;
 		end
 		else begin
 			if (go_pulse) begin
-				r_disp <= 1'b0;
-				r_unsupp <= 1'b0;
+				l_disp <= 1'b0;
+				l_unsupp <= 1'b0;
 			end
 			if (disp_valid) begin
-				r_engine <= disp_engine;
-				r_tag <= disp_tag;
-				r_margin <= margin_nib;
-				r_disp <= 1'b1;
+				l_engine <= disp_engine;
+				l_tag <= disp_tag;
+				l_margin <= margin_nib;
+				l_disp <= 1'b1;
 			end
 			if (err_unsupported)
-				r_unsupp <= 1'b1;
+				l_unsupp <= 1'b1;
 		end
-	reg r_stale;
 	always @(posedge clk or negedge rst_n)
 		if (!rst_n)
-			r_stale <= 1'b0;
+			l_stale <= 1'b0;
 		else if (err_stale_comp)
-			r_stale <= 1'b1;
-	assign uo_out = {wd_ready, |obs_tag_busy, r_stale, r_unsupp, r_disp, r_engine};
-	assign uio_out = {r_margin, r_tag};
+			l_stale <= 1'b1;
+	wire ready = wd_ready;
+	wire any_busy = |obs_tag_busy;
+	assign uo_out = (reg_mode ? {ready, any_busy, r_disp_sticky, r_last_engine, r_irq, spi_cipo} : {ready, any_busy, l_stale, l_unsupp, l_disp, l_engine});
+	assign uio_out = (reg_mode ? {r_margin_nib, r_last_tag} : {l_margin, l_tag});
 	assign uio_oe = 8'hff;
+	wire _unused_spi = &{cs_active, 1'b0};
 endmodule
 `default_nettype wire
