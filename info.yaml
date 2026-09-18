@@ -80,7 +80,8 @@ project:
   # three cycles per descriptor either way; nothing about the design cares.
   clock_hz:     18000000
 
-  tiles: "3x4"
+  tiles: "4x4"          # v2 is 44% larger than v1 (135,203 -> 194,647 um2 of
+                        # cells, tools/sky130_area.sh): 3x4 would need ~90% density
 
   top_module:  "tt_um_hydra_mom"
 
