@@ -11,7 +11,7 @@
 # tools/tt_check.sh diffs this output against the committed project.v.
 set -euo pipefail
 D="$(cd "$(dirname "$0")" && pwd)"
-sv2v "$D/rtl/mom_pkg.sv" "$D/rtl/mom_features.sv" "$D/rtl/mom_param_rom.sv" \
+sv2v "$D/rtl/hydra_rst_sync.sv" "$D/rtl/mom_pkg.sv" "$D/rtl/mom_features.sv" "$D/rtl/mom_param_rom.sv" \
      "$D/rtl/mom_cost_engine.sv" "$D/rtl/mom_calibrate.sv" \
      "$D/rtl/mom_select.sv" "$D/rtl/mom_scoreboard.sv" "$D/rtl/mom_top.sv" \
      "$D/rtl/hydra_tt_spi.sv" "$D/rtl/hydra_tt_regs.sv" \

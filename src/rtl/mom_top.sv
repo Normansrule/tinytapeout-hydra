@@ -33,9 +33,42 @@
 
 `default_nettype none
 
+// The cost-engine configuration is selected by a MACRO, not by a parameter
+// override. sv2v resolves generate blocks while converting, using the
+// parameter's DEFAULT: an override passed at instantiation was silently
+// ignored, and tb_v1_v2_diff spent a run comparing the shared build against
+// v1 and reporting 182,250 differences. A macro is decided before conversion
+// and cannot be quietly dropped.
+//   default (unset)            -> shared engine, what the tile ships
+//   -DHYDRA_COST_SHARED=1'b0   -> five parallel engines, for the differential
+`ifndef HYDRA_COST_SHARED
+  `define HYDRA_COST_SHARED 1'b1
+`endif
+
 module mom_top
   import mom_pkg::*;
 #(
+  // ===========================================================================
+  // COST_SHARED: one cost engine, walked over the engines, instead of five
+  // ===========================================================================
+  // Five parallel cost engines are 95,016 um^2 -- 39% of the tile, and the
+  // reason the 4x4 harden ran out of room at 98.8% placement density. The
+  // engines are IDENTICAL logic differing only in their inputs (ENGINE_ID is
+  // declared but never used in the body), so one engine walked over the five
+  // parameter rows computes the same five costs in more cycles and about a
+  // fifth of the area. Measured: mom_top falls from 190,802 to ~117,665 um^2.
+  //
+  // TWO CYCLES PER ENGINE, not one. The engine is internally pipelined and
+  // its second stage consumes k_cal -- the calibration factor, an INPUT --
+  // alongside the registered first-stage result. Advancing every cycle would
+  // multiply engine e's predicted time by engine e+1's calibration factor.
+  // Holding each engine's inputs for two cycles is the cheap, obviously
+  // correct fix; a skewed second select would save five cycles and is not
+  // worth the subtlety here.
+  //
+  // COST_SHARED = 0 keeps the five parallel engines, which is what
+  // tb_v1_v2_diff builds to prove the datapath is unchanged.
+  parameter bit          COST_SHARED = `HYDRA_COST_SHARED,
   parameter int unsigned NTAG = 16,
   parameter int unsigned QMAX = 8
 ) (
@@ -140,29 +173,113 @@ module mom_top
   // ===========================================================================
   // Stage 2: five cost engines in parallel
   // ===========================================================================
+  // Driven by the engines in parallel mode, by lane registers in shared mode.
   logic [ENG_N-1:0][COST_W-1:0] cost;
   logic [ENG_N-1:0][COST_W-1:0] t_pred;
   logic [ENG_N-1:0]             cvalid;
 
-  for (genvar e = 0; e < ENG_N; e++) begin : g_cost
-    mom_cost_engine #(.ENGINE_ID(engine_e'(e))) u_ce (
-      .clk(clk), .rst_n(rst_n), .adv(a_adv),
+  logic [ENG_N-1:0]             ccapable;
+
+  // Shared-mode sequencer state, declared here so both branches can read it.
+  logic                         eval_done;      // costs for all engines ready
+  logic                         eval_busy;
+  // The sweep writes the SELECTOR's registers directly. Lane registers of
+  // its own would be the same 330 flip-flops twice: cost, predicted time,
+  // valid and capable for five engines, held once by the sweep and again by
+  // the cost register a cycle later. Writing in place is safe because a
+  // sweep only starts when that register is free, and c_valid is low for its
+  // whole duration, so the selector never reads a half-written set.
+  logic                         lane_we;        // write one engine's result
+  logic [2:0]                   lane_idx;
+  logic [COST_W-1:0]            lane_cost, lane_tpred;
+  logic                         lane_valid, lane_capable;
+
+  generate
+  if (!COST_SHARED) begin : g_parallel
+    // ---- five engines, one cycle, bit-exact with v1 --------------------------
+    for (genvar e = 0; e < ENG_N; e++) begin : g_cost
+      mom_cost_engine #(.ENGINE_ID(engine_e'(e))) u_ce (
+        .clk(clk), .rst_n(rst_n), .adv(a_adv),
+        .log2_w(f_lg_w), .bytes_q(f_wd.bytes), .log2_i(f_lg_i),
+        .dtype(f_wd.dtype), .op_class(f_wd.op_class), .lat_hint(f_wd.lat_hint),
+        .lambda_sh(lambda_sh_of(f_wd.pwr_hint)),
+        .param(params[e]), .k_cal(k_cal[e]),
+        .queue_depth(queue_depth[e]), .engine_busy_full(engine_full[e]),
+        .bw_dma_log2(csr_bw_dma_log2), .eps_mem(csr_eps_mem),
+        .e_shift(csr_e_shift),
+        .cost(cost[e]), .t_pred(t_pred[e]), .valid(cvalid[e]),
+        .capable(ccapable[e])
+      );
+    end
+    assign eval_done    = 1'b0;
+    assign eval_busy    = 1'b0;
+    assign lane_we      = 1'b0;
+    assign lane_idx     = 3'd0;
+    assign lane_cost    = '0;
+    assign lane_tpred   = '0;
+    assign lane_valid   = 1'b0;
+    assign lane_capable = 1'b0;
+
+  end else begin : g_shared
+    // ---- one engine, walked over the five parameter rows ---------------------
+    //   phase 0: present engine idx, advance -- stage A latches
+    //   phase 1: same inputs held, stage B valid for idx -- capture it
+    logic [2:0] idx;
+    logic       phase;
+
+    wire last = (idx == 3'(ENG_N - 1)) && phase;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+      if (!rst_n) begin
+        idx <= 3'd0; phase <= 1'b0; eval_busy <= 1'b0;
+      end else if (!eval_busy) begin
+        // Start only when stage A is free, so a finished set of costs is
+        // never overwritten before the selector has taken it.
+        if (f_valid && (!c_valid || c_ready)) begin
+          eval_busy <= 1'b1; idx <= 3'd0; phase <= 1'b0;
+        end
+      end else if (last) begin
+        eval_busy <= 1'b0; idx <= 3'd0; phase <= 1'b0;
+      end else if (phase) begin
+        phase <= 1'b0; idx <= idx + 3'd1;
+      end else begin
+        phase <= 1'b1;
+      end
+    end
+
+    assign eval_done = eval_busy && last;
+
+    logic [COST_W-1:0] s_cost, s_tpred;
+    logic              s_valid, s_capable;
+
+    mom_cost_engine #(.ENGINE_ID(ENG_CPU)) u_ce (
+      .clk(clk), .rst_n(rst_n), .adv(eval_busy && !phase),
       .log2_w(f_lg_w), .bytes_q(f_wd.bytes), .log2_i(f_lg_i),
       .dtype(f_wd.dtype), .op_class(f_wd.op_class), .lat_hint(f_wd.lat_hint),
       .lambda_sh(lambda_sh_of(f_wd.pwr_hint)),
-      .param(params[e]), .k_cal(k_cal[e]),
-      .queue_depth(queue_depth[e]), .engine_busy_full(engine_full[e]),
+      .param(params[idx]), .k_cal(k_cal[idx]),
+      .queue_depth(queue_depth[idx]), .engine_busy_full(engine_full[idx]),
       .bw_dma_log2(csr_bw_dma_log2), .eps_mem(csr_eps_mem),
       .e_shift(csr_e_shift),
-      .cost(cost[e]), .t_pred(t_pred[e]), .valid(cvalid[e]),
-      .capable(ccapable[e])
+      .cost(s_cost), .t_pred(s_tpred), .valid(s_valid), .capable(s_capable)
     );
+
+    // Engine idx's result is valid in its second cycle; hand it to the cost
+    // register, which stores it in place.
+    assign lane_we      = eval_busy && phase;
+    assign lane_idx     = idx;
+    assign lane_cost    = s_cost;
+    assign lane_tpred   = s_tpred;
+    assign lane_valid   = s_valid;
+    assign lane_capable = s_capable;
+    assign cost = '0; assign t_pred = '0; assign cvalid = '0;
+    assign ccapable = '0;
   end
+  endgenerate
 
   // ===========================================================================
   // Stage 3: argmin
   // ===========================================================================
-  logic [ENG_N-1:0]  ccapable;
 
   // ---------------------------------------------------------------------------
   // Stage 2b (session 141): the cost register.
@@ -194,12 +311,20 @@ module mom_top
   // cost register can accept. Both stages move in lockstep on a_adv.
   wire                          a_adv    = !a_valid || c_accept;
 
+  // Stage A load/clear. Parallel mode is the original behaviour written as
+  // load/clear terms; shared mode loads when the sequencer finishes a full
+  // sweep and clears when the selector takes the result.
+  wire a_load  = COST_SHARED ? 1'b0                 : (a_adv && f_valid);
+  wire a_clear = COST_SHARED ? 1'b0                 : (a_adv && !f_valid);
+
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       a_valid <= 1'b0; a_wd <= '0;
-    end else if (a_adv) begin
-      a_valid <= f_valid;
-      if (f_valid) a_wd <= f_wd;
+    end else if (a_load) begin
+      a_valid <= 1'b1;
+      a_wd    <= f_wd;
+    end else if (a_clear) begin
+      a_valid <= 1'b0;
     end
   end
 
@@ -211,6 +336,20 @@ module mom_top
       cvalid_q   <= '0;
       ccapable_q <= '0;
       c_wd       <= '0;
+    end else if (COST_SHARED) begin
+      // One engine per two cycles, written straight into these registers.
+      if (lane_we) begin
+        cost_q[lane_idx]     <= lane_cost;
+        t_pred_q[lane_idx]   <= lane_tpred;
+        cvalid_q[lane_idx]   <= lane_valid;
+        ccapable_q[lane_idx] <= lane_capable;
+      end
+      if (eval_done) begin
+        c_valid <= 1'b1;
+        c_wd    <= f_wd;
+      end else if (c_ready) begin
+        c_valid <= 1'b0;
+      end
     end else if (c_accept) begin
       c_valid    <= a_valid;
       if (a_valid) begin
@@ -278,7 +417,9 @@ module mom_top
   // Drain on a successful dispatch OR on an unsupported descriptor. The second
   // term is what breaks the livelock.
   assign c_ready     = (disp_valid && disp_accept) || unsupported;
-  assign f_ready     = a_adv;
+  // The features stage may move on only when its descriptor has been
+  // consumed: one cycle in parallel mode, the end of the sweep in shared.
+  assign f_ready     = COST_SHARED ? eval_done : a_adv;
 
 endmodule
 
