@@ -21,7 +21,7 @@ hardened GDS by Tiny Tapeout's own tool (`./tt/tt_tool.py --create-png`).*
 | **Calibration** | every completion reports its real duration; a per-engine factor moves toward the truth |
 | **Decision latency** | about 13 cycles — one shared cost engine evaluates all five in turn |
 | **Interfaces** | two personalities, strapped at reset: the v1 serial pins, or an SPI register map |
-| **Clock** | 15.15 MHz (66 ns) — every corner meets setup; slow-corner slack +2.18 ns |
+| **Clock** | 15.15 MHz (66 ns) — every corner meets setup; slow-corner slack +2.20 ns; sign-off clean |
 | **Area** | 144,505 µm² of standard cells by synthesis, 26% smaller than five parallel engines |
 | **Tiles** | 4 × 4 |
 
@@ -53,15 +53,16 @@ decision** as the parallel one on every descriptor it is given.
 | Hardening, all 80 stages | **complete** |
 | Layout versus schematic | **match** — 18,773 devices, 18,637 nets |
 | Design rule check (Magic) | **clean** |
-| Setup timing at 66 ns | **met at all nine corners** — slow corner +2.184 ns |
+| Setup timing at 66 ns | **met at all nine corners** — slow corner +2.199 ns |
 | Hold timing | **met at all nine corners** |
-| Antenna | **1 net** left after three repair passes; config now runs six — re-harden pending |
+| Antenna | **clean** — six repair passes cleared the last net |
 | Utilisation | **67.3%** of the 4×4 tile |
+| Gate-level simulation | pending — `scripts/tile-gl.sh` |
 | Tile tests, RTL | 17 / 17 |
 
 Honest reading: timing is closed. What closed it was releasing the reset
 through a synchroniser, not a longer clock — the same 66 ns failed without it.
-One antenna net is the last sign-off item.
+Sign-off is clean; gate-level simulation of the hardened netlist is the last check.
 
 ## How to test
 
