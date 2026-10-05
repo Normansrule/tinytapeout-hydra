@@ -28,6 +28,17 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, RisingEdge
 
+# Cycles to allow between asserting `go` and reading the status pins.
+#
+# The dispatcher evaluates the five engines on ONE shared cost engine, two
+# cycles each (the engine's second stage consumes the calibration factor, an
+# input, so each engine's inputs are held across both of its cycles), plus
+# the feature, cost-register and select stages. Ten cycles of arithmetic and
+# a few of pipeline. This was 4 when five engines ran in parallel; it is a
+# named constant now so the next latency change is one edit and not a hunt
+# through the file.
+SETTLE = 20
+
 # Encodings mirrored from rtl/mom/mom_pkg.sv. These were WRONG in the first
 # version -- OPC_GEMM was guessed as 4 when it is 3 -- and the failure looked
 # like a broken cost model rather than a broken constant. Copy them from the
@@ -101,7 +112,7 @@ async def shift_and_go(dut, desc):
     dut.ui_in.value = 1 << 2                       # go, held
     await ClockCycles(dut.clk, 6)
     dut.ui_in.value = 0
-    await ClockCycles(dut.clk, 4)
+    await ClockCycles(dut.clk, SETTLE)
 
 
 def decode_status(dut):

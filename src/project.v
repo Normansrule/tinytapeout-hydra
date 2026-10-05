@@ -1,4 +1,27 @@
 `default_nettype none
+module hydra_rst_sync (
+	clk,
+	arst_n,
+	scan_mode,
+	scan_rst_n,
+	rst_n
+);
+	parameter signed [31:0] STAGES = 2;
+	input wire clk;
+	input wire arst_n;
+	input wire scan_mode;
+	input wire scan_rst_n;
+	output wire rst_n;
+	reg [STAGES - 1:0] sync_q;
+	always @(posedge clk or negedge arst_n)
+		if (!arst_n)
+			sync_q <= 1'sb0;
+		else
+			sync_q <= {sync_q[STAGES - 2:0], 1'b1};
+	assign rst_n = (scan_mode ? scan_rst_n : sync_q[STAGES - 1]);
+endmodule
+`default_nettype wire
+`default_nettype none
 `default_nettype wire
 `default_nettype none
 module mom_features (
@@ -694,6 +717,7 @@ module mom_top (
 	obs_cal_updates,
 	obs_tag_busy
 );
+	parameter [0:0] COST_SHARED = 1'b1;
 	parameter [31:0] NTAG = 16;
 	parameter [31:0] QMAX = 8;
 	input wire clk;
@@ -783,13 +807,20 @@ module mom_top (
 	wire [(mom_pkg_ENG_N * mom_pkg_COST_W) - 1:0] cost;
 	wire [(mom_pkg_ENG_N * mom_pkg_COST_W) - 1:0] t_pred;
 	wire [4:0] cvalid;
-	genvar _gv_e_6;
+	wire [4:0] ccapable;
+	wire eval_done;
+	reg eval_busy;
+	wire lane_we;
+	wire [2:0] lane_idx;
+	wire [31:0] lane_cost;
+	wire [31:0] lane_tpred;
+	wire lane_valid;
+	wire lane_capable;
 	reg a_valid;
 	wire c_ready;
 	reg c_valid;
 	wire c_accept = !c_valid || c_ready;
 	wire a_adv = !a_valid || c_accept;
-	wire [4:0] ccapable;
 	function automatic [3:0] mom_pkg_lambda_sh_of;
 		input reg [1:0] h;
 		case (h)
@@ -805,12 +836,82 @@ module mom_top (
 		sv2v_cast_3 = inp;
 	endfunction
 	generate
-		for (_gv_e_6 = 0; _gv_e_6 < mom_pkg_ENG_N; _gv_e_6 = _gv_e_6 + 1) begin : g_cost
-			localparam e = _gv_e_6;
-			mom_cost_engine #(.ENGINE_ID(sv2v_cast_3(e))) u_ce(
+		if (!COST_SHARED) begin : g_parallel
+			genvar _gv_e_6;
+			for (_gv_e_6 = 0; _gv_e_6 < mom_pkg_ENG_N; _gv_e_6 = _gv_e_6 + 1) begin : g_cost
+				localparam e = _gv_e_6;
+				mom_cost_engine #(.ENGINE_ID(sv2v_cast_3(e))) u_ce(
+					.clk(clk),
+					.rst_n(rst_n),
+					.adv(a_adv),
+					.log2_w(f_lg_w),
+					.bytes_q(f_wd[68-:24]),
+					.log2_i(f_lg_i),
+					.dtype(f_wd[123-:3]),
+					.op_class(f_wd[127-:4]),
+					.lat_hint(f_wd[120-:2]),
+					.lambda_sh(mom_pkg_lambda_sh_of(f_wd[118-:2])),
+					.param(params[e * 43+:43]),
+					.k_cal(k_cal[e * 8+:8]),
+					.queue_depth(queue_depth[e * 8+:8]),
+					.engine_busy_full(engine_full[e]),
+					.bw_dma_log2(csr_bw_dma_log2),
+					.eps_mem(csr_eps_mem),
+					.e_shift(csr_e_shift),
+					.cost(cost[e * mom_pkg_COST_W+:mom_pkg_COST_W]),
+					.t_pred(t_pred[e * mom_pkg_COST_W+:mom_pkg_COST_W]),
+					.valid(cvalid[e]),
+					.capable(ccapable[e])
+				);
+			end
+			assign eval_done = 1'b0;
+			wire [1:1] sv2v_tmp_74BE0;
+			assign sv2v_tmp_74BE0 = 1'b0;
+			always @(*) eval_busy = sv2v_tmp_74BE0;
+			assign lane_we = 1'b0;
+			assign lane_idx = 3'd0;
+			assign lane_cost = 1'sb0;
+			assign lane_tpred = 1'sb0;
+			assign lane_valid = 1'b0;
+			assign lane_capable = 1'b0;
+		end
+		else begin : g_shared
+			reg [2:0] idx;
+			reg phase;
+			wire last = (idx == sv2v_cast_3(4)) && phase;
+			always @(posedge clk or negedge rst_n)
+				if (!rst_n) begin
+					idx <= 3'd0;
+					phase <= 1'b0;
+					eval_busy <= 1'b0;
+				end
+				else if (!eval_busy) begin
+					if (f_valid && (!c_valid || c_ready)) begin
+						eval_busy <= 1'b1;
+						idx <= 3'd0;
+						phase <= 1'b0;
+					end
+				end
+				else if (last) begin
+					eval_busy <= 1'b0;
+					idx <= 3'd0;
+					phase <= 1'b0;
+				end
+				else if (phase) begin
+					phase <= 1'b0;
+					idx <= idx + 3'd1;
+				end
+				else
+					phase <= 1'b1;
+			assign eval_done = eval_busy && last;
+			wire [31:0] s_cost;
+			wire [31:0] s_tpred;
+			wire s_valid;
+			wire s_capable;
+			mom_cost_engine #(.ENGINE_ID(3'd0)) u_ce(
 				.clk(clk),
 				.rst_n(rst_n),
-				.adv(a_adv),
+				.adv(eval_busy && !phase),
 				.log2_w(f_lg_w),
 				.bytes_q(f_wd[68-:24]),
 				.log2_i(f_lg_i),
@@ -818,18 +919,28 @@ module mom_top (
 				.op_class(f_wd[127-:4]),
 				.lat_hint(f_wd[120-:2]),
 				.lambda_sh(mom_pkg_lambda_sh_of(f_wd[118-:2])),
-				.param(params[e * 43+:43]),
-				.k_cal(k_cal[e * 8+:8]),
-				.queue_depth(queue_depth[e * 8+:8]),
-				.engine_busy_full(engine_full[e]),
+				.param(params[idx * 43+:43]),
+				.k_cal(k_cal[idx * 8+:8]),
+				.queue_depth(queue_depth[idx * 8+:8]),
+				.engine_busy_full(engine_full[idx]),
 				.bw_dma_log2(csr_bw_dma_log2),
 				.eps_mem(csr_eps_mem),
 				.e_shift(csr_e_shift),
-				.cost(cost[e * mom_pkg_COST_W+:mom_pkg_COST_W]),
-				.t_pred(t_pred[e * mom_pkg_COST_W+:mom_pkg_COST_W]),
-				.valid(cvalid[e]),
-				.capable(ccapable[e])
+				.cost(s_cost),
+				.t_pred(s_tpred),
+				.valid(s_valid),
+				.capable(s_capable)
 			);
+			assign lane_we = eval_busy && phase;
+			assign lane_idx = idx;
+			assign lane_cost = s_cost;
+			assign lane_tpred = s_tpred;
+			assign lane_valid = s_valid;
+			assign lane_capable = s_capable;
+			assign cost = 1'sb0;
+			assign t_pred = 1'sb0;
+			assign cvalid = 1'sb0;
+			assign ccapable = 1'sb0;
 		end
 	endgenerate
 	reg [(mom_pkg_ENG_N * mom_pkg_COST_W) - 1:0] cost_q;
@@ -838,16 +949,19 @@ module mom_top (
 	reg [4:0] ccapable_q;
 	reg [127:0] c_wd;
 	reg [127:0] a_wd;
+	wire a_load = (COST_SHARED ? 1'b0 : a_adv && f_valid);
+	wire a_clear = (COST_SHARED ? 1'b0 : a_adv && !f_valid);
 	always @(posedge clk or negedge rst_n)
 		if (!rst_n) begin
 			a_valid <= 1'b0;
 			a_wd <= 1'sb0;
 		end
-		else if (a_adv) begin
-			a_valid <= f_valid;
-			if (f_valid)
-				a_wd <= f_wd;
+		else if (a_load) begin
+			a_valid <= 1'b1;
+			a_wd <= f_wd;
 		end
+		else if (a_clear)
+			a_valid <= 1'b0;
 	always @(posedge clk or negedge rst_n)
 		if (!rst_n) begin
 			c_valid <= 1'b0;
@@ -856,6 +970,20 @@ module mom_top (
 			cvalid_q <= 1'sb0;
 			ccapable_q <= 1'sb0;
 			c_wd <= 1'sb0;
+		end
+		else if (COST_SHARED) begin
+			if (lane_we) begin
+				cost_q[lane_idx * mom_pkg_COST_W+:mom_pkg_COST_W] <= lane_cost;
+				t_pred_q[lane_idx * mom_pkg_COST_W+:mom_pkg_COST_W] <= lane_tpred;
+				cvalid_q[lane_idx] <= lane_valid;
+				ccapable_q[lane_idx] <= lane_capable;
+			end
+			if (eval_done) begin
+				c_valid <= 1'b1;
+				c_wd <= f_wd;
+			end
+			else if (c_ready)
+				c_valid <= 1'b0;
 		end
 		else if (c_accept) begin
 			c_valid <= a_valid;
@@ -923,7 +1051,7 @@ module mom_top (
 	assign disp_engine = sel_eng;
 	assign disp_wd = c_wd;
 	assign c_ready = (disp_valid && disp_accept) || unsupported;
-	assign f_ready = a_adv;
+	assign f_ready = (COST_SHARED ? eval_done : a_adv);
 endmodule
 `default_nettype wire
 `default_nettype none
@@ -1421,6 +1549,14 @@ module tt_um_hydra_mom (
 	input wire ena;
 	input wire clk;
 	input wire rst_n;
+	wire rst_n_sync;
+	hydra_rst_sync #(.STAGES(2)) u_rst_sync(
+		.clk(clk),
+		.arst_n(rst_n),
+		.scan_mode(1'b0),
+		.scan_rst_n(1'b1),
+		.rst_n(rst_n_sync)
+	);
 	localparam [31:0] NTAG = 8;
 	wire _unused = &{ena, uio_in, 1'b0};
 	reg reg_mode;
@@ -1434,15 +1570,15 @@ module tt_um_hydra_mom (
 	wire [3:0] comp_tag_in = ui_in[7:4];
 	localparam [31:0] mom_pkg_WD_W = 128;
 	reg [127:0] sr;
-	always @(posedge clk or negedge rst_n)
-		if (!rst_n)
+	always @(posedge clk or negedge rst_n_sync)
+		if (!rst_n_sync)
 			sr <= 1'sb0;
 		else if (!reg_mode && shift)
 			sr <= {sr[126:0], sdi};
 	reg go_q;
 	reg comp_q;
-	always @(posedge clk or negedge rst_n)
-		if (!rst_n) begin
+	always @(posedge clk or negedge rst_n_sync)
+		if (!rst_n_sync) begin
 			go_q <= 1'b0;
 			comp_q <= 1'b0;
 		end
@@ -1463,7 +1599,7 @@ module tt_um_hydra_mom (
 	wire [4:0] rx_index;
 	hydra_tt_spi u_spi(
 		.clk(clk),
-		.rst_n(rst_n),
+		.rst_n(rst_n_sync),
 		.sck_i(reg_mode & ui_in[0]),
 		.copi_i(reg_mode & ui_in[1]),
 		.csn_i(~reg_mode | ui_in[2]),
@@ -1513,7 +1649,7 @@ module tt_um_hydra_mom (
 	wire fence_busy;
 	hydra_tt_regs #(.NTAG(NTAG)) u_regs(
 		.clk(clk),
-		.rst_n(rst_n),
+		.rst_n(rst_n_sync),
 		.cs_start(cs_start),
 		.cs_end(cs_end),
 		.rx_valid(rx_valid),
@@ -1564,7 +1700,7 @@ module tt_um_hydra_mom (
 		.QMAX(4)
 	) u_mom(
 		.clk(clk),
-		.rst_n(rst_n),
+		.rst_n(rst_n_sync),
 		.wd_valid((reg_mode ? r_wd_valid : go_pulse)),
 		.wd_ready(wd_ready),
 		.wd(sv2v_cast_128((reg_mode ? r_wd : sr))),
@@ -1600,8 +1736,8 @@ module tt_um_hydra_mom (
 	reg l_stale;
 	reg [3:0] l_margin;
 	wire [3:0] margin_nib = (obs_margin[31:16] != {16 {1'sb0}} ? 4'hf : obs_margin[15:12]);
-	always @(posedge clk or negedge rst_n)
-		if (!rst_n) begin
+	always @(posedge clk or negedge rst_n_sync)
+		if (!rst_n_sync) begin
 			l_engine <= 3'd0;
 			l_tag <= 4'd0;
 			l_disp <= 1'b0;
@@ -1622,8 +1758,8 @@ module tt_um_hydra_mom (
 			if (err_unsupported)
 				l_unsupp <= 1'b1;
 		end
-	always @(posedge clk or negedge rst_n)
-		if (!rst_n)
+	always @(posedge clk or negedge rst_n_sync)
+		if (!rst_n_sync)
 			l_stale <= 1'b0;
 		else if (err_stale_comp)
 			l_stale <= 1'b1;

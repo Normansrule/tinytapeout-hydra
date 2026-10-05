@@ -59,8 +59,11 @@ project:
   title:        "TinyTapeout-Hydra"
   author:       "Aleksander J. Norman"
   discord:      ""
-  description:  "Hardware dispatch across five compute engines in three cycles, using a roofline cost model that calibrates itself online from measured completion times. Two personalities: the v1 serial pin interface, or an SPI register map reaching the whole dispatcher including live retuning of the cost model."
-  language:     "SystemVerilog"
+  description:  "Hardware dispatch across five compute engines using a roofline cost model that calibrates itself online from measured completion times. One shared cost engine evaluates all five in about thirteen cycles. Two personalities: the v1 serial pin interface, or an SPI register map reaching the whole dispatcher including live retuning of the cost model."
+  # The design is written in SystemVerilog, but what is SUBMITTED is
+  # src/project.v, which sv2v converts to Verilog-2005. This field describes
+  # the submitted file.
+  language:     "Verilog"
   # 25 MHz. The 20 MHz below was the pre-PAR estimate; the real harden
   # (session 139) failed setup at 20 ns and closes at 55 ns == ~18 MHz (OpenSTA measured 46.56 ns reg-to-reg).
   #
@@ -77,10 +80,11 @@ project:
   #
   # 20 MHz gives 50 ns against a measured 46.56 ns -- margin that exists
   # BEFORE any PAR improvement rather than depending on it. The MOM takes
-  # three cycles per descriptor either way; nothing about the design cares.
-  clock_hz:     18000000
+  # about thirteen cycles (three before the cost engine was shared) per descriptor either way; nothing about the design cares.
+  clock_hz:     15151515
 
-  tiles: "3x4"
+  tiles: "4x4"          # v2 is 44% larger than v1 (135,203 -> 194,647 um2 of
+                        # cells, tools/sky130_area.sh): 3x4 would need ~90% density
 
   top_module:  "tt_um_hydra_mom"
 

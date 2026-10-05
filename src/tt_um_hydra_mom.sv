@@ -110,6 +110,33 @@ module tt_um_hydra_mom
   input  wire       rst_n
 );
 
+  // ===========================================================================
+  // RESET: asserted asynchronously, RELEASED synchronously
+  // ===========================================================================
+  // The rst_n pin used to drive every asynchronously-reset flip-flop directly
+  // -- about 2,500 of them. Two problems with that, one physical and one
+  // logical:
+  //
+  //   TIMING   every recovery check started at an INPUT PIN, carrying the
+  //            input delay the constraints assign to pins (20% of the
+  //            period), then crossed a buffer tree to thousands of loads.
+  //            The slow corner missed timing even after the clock period was
+  //            lengthened from 55 to 66 ns, which is the signature of a path
+  //            that does not scale with the clock.
+  //   LOGIC    release was asynchronous to the clock, so different
+  //            flip-flops could leave reset on different cycles.
+  //
+  // hydra_rst_sync (formally verified in the parent repository) asserts the
+  // moment rst_n falls and releases only after STAGES clean clock edges.
+  // Recovery checks now start at a REGISTER, inside the clock domain.
+  //
+  // The mode strap is the one deliberate exception: it is sampled from the
+  // raw pin while reset is held, which is when the strap is valid.
+  wire rst_n_sync;
+  hydra_rst_sync #(.STAGES(2)) u_rst_sync (
+    .clk(clk), .arst_n(rst_n), .scan_mode(1'b0), .scan_rst_n(1'b1),
+    .rst_n(rst_n_sync));
+
   localparam int unsigned NTAG = 8;
 
   wire _unused = &{ena, uio_in, 1'b0};
@@ -131,13 +158,13 @@ module tt_um_hydra_mom
   wire [3:0] comp_tag_in = ui_in[7:4];
 
   logic [WD_W-1:0] sr;
-  always_ff @(posedge clk or negedge rst_n)
-    if (!rst_n)                  sr <= '0;
+  always_ff @(posedge clk or negedge rst_n_sync)
+    if (!rst_n_sync)                  sr <= '0;
     else if (!reg_mode && shift) sr <= {sr[WD_W-2:0], sdi};
 
   logic go_q, comp_q;
-  always_ff @(posedge clk or negedge rst_n)
-    if (!rst_n) begin go_q <= 1'b0; comp_q <= 1'b0; end
+  always_ff @(posedge clk or negedge rst_n_sync)
+    if (!rst_n_sync) begin go_q <= 1'b0; comp_q <= 1'b0; end
     else        begin go_q <= go;   comp_q <= comp; end
 
   wire go_pulse   = ~reg_mode & go   & ~go_q;
@@ -153,7 +180,7 @@ module tt_um_hydra_mom
   // Pins are gated off in legacy mode so the SPI block sees an idle bus and
   // cannot mistake legacy traffic for frames.
   hydra_tt_spi u_spi (
-    .clk(clk), .rst_n(rst_n),
+    .clk(clk), .rst_n(rst_n_sync),
     .sck_i(reg_mode & ui_in[0]), .copi_i(reg_mode & ui_in[1]),
     .csn_i(~reg_mode | ui_in[2]), .cipo_o(spi_cipo),
     .cs_start(cs_start), .cs_end(cs_end), .cs_active(cs_active),
@@ -185,7 +212,7 @@ module tt_um_hydra_mom
   wire               fence_busy;
 
   hydra_tt_regs #(.NTAG(NTAG)) u_regs (
-    .clk(clk), .rst_n(rst_n),
+    .clk(clk), .rst_n(rst_n_sync),
     .cs_start(cs_start), .cs_end(cs_end), .rx_valid(rx_valid),
     .rx_byte(rx_byte), .rx_index(rx_index), .tx_load(tx_load), .tx_byte(tx_byte),
     .wd_valid(r_wd_valid), .wd_ready(wd_ready), .wd(r_wd),
@@ -206,7 +233,7 @@ module tt_um_hydra_mom
   wire disp_accept = reg_mode ? r_disp_accept : 1'b1;
 
   mom_top #(.NTAG(NTAG), .QMAX(4)) u_mom (
-    .clk(clk), .rst_n(rst_n),
+    .clk(clk), .rst_n(rst_n_sync),
     .wd_valid(reg_mode ? r_wd_valid : go_pulse), .wd_ready(wd_ready),
     .wd(work_desc_t'(reg_mode ? r_wd : sr)),
     .disp_valid(disp_valid), .disp_accept(disp_accept),
@@ -238,8 +265,8 @@ module tt_um_hydra_mom
   wire [3:0] margin_nib = (obs_margin[COST_W-1:16] != '0) ? 4'hF
                                                           : obs_margin[15:12];
 
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
+  always_ff @(posedge clk or negedge rst_n_sync) begin
+    if (!rst_n_sync) begin
       l_engine <= 3'd0; l_tag <= 4'd0;
       l_disp   <= 1'b0; l_unsupp <= 1'b0; l_margin <= 4'd0;
     end else begin
@@ -257,8 +284,8 @@ module tt_um_hydra_mom
     end
   end
 
-  always_ff @(posedge clk or negedge rst_n)
-    if (!rst_n)              l_stale <= 1'b0;
+  always_ff @(posedge clk or negedge rst_n_sync)
+    if (!rst_n_sync)              l_stale <= 1'b0;
     else if (err_stale_comp) l_stale <= 1'b1;
 
   // =========================================================================

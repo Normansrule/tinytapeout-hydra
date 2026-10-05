@@ -1,7 +1,7 @@
 ## How it works
 
 This is the dispatch unit from HYDRA-130, a heterogeneous compute SoC. It
-decides, in hardware and in three cycles, which of five compute engines should
+decides, in hardware and in about thirteen cycles, which of five compute engines should
 execute a given unit of work: a scalar CPU, a SIMD unit, a systolic INT8 array,
 a number-theoretic transform engine, or a crypto datapath.
 
@@ -52,6 +52,15 @@ a subtract, a shift, a comparator, and an add.
 That is the claim this chip exists to test: **a self-calibrating hardware
 dispatch model under 25,000 gates, matching software dispatch decisions with two
 orders of magnitude less overhead.**
+
+### Reset
+
+`rst_n` is asserted immediately but **released two clock cycles later**,
+through a synchroniser. Every internal flip-flop therefore leaves reset on the
+same edge, and the reset's timing checks start inside the clock domain rather
+than at a pin. Allow three clock cycles after releasing `rst_n` before driving
+inputs. The register-personality strap (`ui_in[7:4] = 0xA`) is still sampled
+directly from the pin while reset is held.
 
 ## How to test
 
@@ -114,7 +123,12 @@ buffers, so its numbers are pessimistic — but the worst fanout in this netlist
 is 71, which is modest, so PAR will recover less here than it would on a design
 with wide pipeline registers.
 
-The dispatch decision takes three cycles at any clock.
+The dispatch decision takes about thirteen cycles at any clock. It was three
+when five cost engines ran in parallel; the shipped tile evaluates all five on
+ONE shared engine, two cycles each, which made the tile 26% smaller. The
+decisions are identical -- `make cost-mux` in the parent repository runs the
+same 120 descriptors through both versions and compares every choice -- only
+the latency differs.
 
 ## Area
 
