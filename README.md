@@ -57,12 +57,13 @@ decision** as the parallel one on every descriptor it is given.
 | Hold timing | **met at all nine corners** |
 | Antenna | **clean** — six repair passes cleared the last net |
 | Utilisation | **67.3%** of the 4×4 tile |
-| Gate-level simulation | pending — `scripts/tile-gl.sh` |
+| Gate-level simulation | **17 / 17** on the hardened netlist (2026-10-07) |
 | Tile tests, RTL | 17 / 17 |
 
 Honest reading: timing is closed. What closed it was releasing the reset
 through a synchroniser, not a longer clock — the same 66 ns failed without it.
-Sign-off is clean; gate-level simulation of the hardened netlist is the last check.
+Sign-off is clean, and the hardened netlist passes the same 17 tests as the
+register-transfer-level design.
 
 ## How to test
 
