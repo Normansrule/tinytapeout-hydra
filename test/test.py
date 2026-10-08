@@ -94,7 +94,7 @@ async def reset(dut):
     await ClockCycles(dut.clk, 5)
 
 
-async def shift_and_go(dut, desc):
+async def shift_and_go(dut, desc, hold=6):
     """Shift 128 bits MSB first, then pulse go.
 
     `go` is deliberately held high for several cycles. The tile edge-detects
@@ -110,7 +110,7 @@ async def shift_and_go(dut, desc):
     await ClockCycles(dut.clk, 1)
 
     dut.ui_in.value = 1 << 2                       # go, held
-    await ClockCycles(dut.clk, 6)
+    await ClockCycles(dut.clk, hold)
     dut.ui_in.value = 0
     await ClockCycles(dut.clk, SETTLE)
 
@@ -210,12 +210,19 @@ async def test_edge_detected_go(dut):
 
     desc = build_descriptor(OPC_GEMM, DT_INT8, LAT_BALANCED, PWR_BALANCED,
                             8, 8, 8, 192)
+    # `go` is held for HOLD cycles -- several times the decision latency.
+    # It was 6 until 2026-10-08: once one shared cost engine made a decision
+    # take ~13 cycles, a 6-cycle hold ended before a level-sensitive tile
+    # could re-dispatch, and the mutation that removes the edge detector
+    # survived every test. Holding past several decisions gives it the
+    # chance to misbehave.
+    HOLD = 3 * SETTLE
     tags = []
     for _ in range(3):
-        await shift_and_go(dut, desc)
+        await shift_and_go(dut, desc, hold=HOLD)
         tags.append(decode_status(dut)["tag"])
 
-    dut._log.info(f"tags allocated with `go` held 6 cycles: {tags}")
+    dut._log.info(f"tags allocated with `go` held {HOLD} cycles: {tags}")
     assert tags == [0, 1, 2], (
         f"expected consecutive tags 0,1,2 but got {tags}; a level-sensitive "
         "`go` would consume several tags per request"
