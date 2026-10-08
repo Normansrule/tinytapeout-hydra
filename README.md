@@ -1,6 +1,8 @@
 ![gds](../../workflows/gds/badge.svg) ![docs](../../workflows/docs/badge.svg) ![test](../../workflows/test/badge.svg)
 
-# HYDRA-130 · a dispatcher that measures its own engines
+<p align="center">
+  <img src="docs/img/tile_hero.svg" width="100%" alt="tt_um_hydra_mom: a work dispatcher on a 4 by 4 Tiny Tapeout tile. A descriptor is shifted in on the input pins, one shared cost engine costs five compute engines in turn, and the cheapest is reported on the output pins. Timing closes at every corner; sign-off is clean; all 17 tests pass on the hardened netlist.">
+</p>
 
 **A hardware scheduler in 4×4 Tiny Tapeout tiles.** Give it a unit of work — a
 matrix multiply, a vector operation, a polynomial transform — and it predicts
