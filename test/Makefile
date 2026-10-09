@@ -18,6 +18,6 @@ endif
 
 VERILOG_SOURCES += $(PWD)/tb.v
 TOPLEVEL = tb
-COCOTB_TEST_MODULES = test,test_regs   # legacy personality, register personality
+COCOTB_TEST_MODULES = test,test_regs   # silicon readiness, then the register-map experiments
 
 include $(shell cocotb-config --makefiles)/Makefile.sim

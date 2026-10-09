@@ -13,7 +13,10 @@
 
   "//": "PL_TARGET_DENSITY_PCT - You can increase this if Global Placement fails with error GPL-0302.",
   "//": "Users have reported that values up to 80 worked well for them.",
-  "PL_TARGET_DENSITY_PCT": 60,
+  "//": "HYDRA v3 (2026-10-09): 60 -> 70. The research tile moved from 4x4 to 3x4;",
+  "//": "its cells are ~61% of the 3x4 core before any buffering, which is above",
+  "//": "the default target and would stop global placement (GPL-0302).",
+  "PL_TARGET_DENSITY_PCT": 70,
 
   "//": "CLOCK_PERIOD - Increase this in case you are getting setup time violations.",
   "//": "The value is in nanoseconds, so 20ns == 50MHz.",

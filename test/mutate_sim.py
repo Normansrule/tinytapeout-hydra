@@ -25,15 +25,10 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-# NOT MUTATED, and why. Session 179 ran `.csn_i(~reg_mode | ui_in[2])` ->
-# `.csn_i(ui_in[2])`, letting legacy pin traffic assemble frames inside the SPI
-# block, and it SURVIVED the whole suite. That is correct: every register
-# output is gated by reg_mode at the mom_top instance, and reg_mode can only
-# change while reset is asserted -- which also clears the register block. So
-# the gate has no observable effect at the pins; it is isolation, not
-# behaviour, and it stays for that reason. A mutation nothing can observe is
-# not evidence of a weak test, and pretending otherwise by deleting the check
-# would be the wrong lesson. Do not re-add it as a mutation.
+# v3 (2026-10-09): the legacy personality and LASTWD are gone, so their
+# mutations went with them (the strap, the `go` edge detector, LASTWD
+# capture). The handshake that replaced the edge detector -- one GO, one
+# dispatch -- has its own mutation below.
 
 MUTATIONS = [
     # (label, file, anchor, replacement, test that must fail)
@@ -57,13 +52,13 @@ MUTATIONS = [
      "test_reg_param_retune_moves_the_decision"),
     ("status byte missing during command",
      "src/rtl/hydra_tt_regs.sv", "if (!have_cmd)   tx_byte = status_w[15:8];", "if (!have_cmd)   tx_byte = 8'h00;",
-     "test_reg_strap_id_and_defaults"),
+     "test_reg_id_and_defaults"),
     ("read bytes in wrong order",
      "src/rtl/hydra_tt_regs.sv", "7'((len - 5'd1 - k)) * 7'd8;", "7'(k) * 7'd8;",
-     "test_reg_strap_id_and_defaults"),
-    ("LASTWD not captured",
-     "src/rtl/hydra_tt_regs.sv", "r_lastwd <= disp_wd;", "r_lastwd <= r_lastwd;",
-     "test_reg_crossover_and_readback"),
+     "test_reg_id_and_defaults"),
+    ("GO request never retired",
+     "src/rtl/hydra_tt_regs.sv", "if (pending_q && wd_ready) pending_q <= 1'b0;", "if (1'b0) pending_q <= 1'b0;",
+     "test_one_go_one_dispatch"),
     ("clear-sticky leaves frame error",
      "src/rtl/hydra_tt_regs.sv", "s_stale <= 1'b0;\n        s_frame <= 1'b0;", "s_stale <= 1'b0;\n",
      "test_reg_torn_frames_change_nothing"),
@@ -72,13 +67,16 @@ MUTATIONS = [
      "test_reg_margin_pins_are_log_scaled"),
     ("SPI shifts LSB first",
      "src/rtl/hydra_tt_spi.sv", "assign cipo_o = tx_sr[7];", "assign cipo_o = tx_sr[0];",
-     "test_reg_strap_id_and_defaults"),
-    ("strap selects register mode by default",
-     "src/tt_um_hydra_mom.sv", "(ui_in[7:4] == 4'hA)", "(ui_in[7:4] != 4'hA)",
-     "test_roofline_crossover"),
-    ("legacy go not edge detected",
-     "src/tt_um_hydra_mom.sv", "~reg_mode & go   & ~go_q;", "~reg_mode & go;",
-     "test_edge_detected_go"),
+     "test_reg_id_and_defaults"),
+    ("completion tag range not checked",
+     "src/rtl/mom_scoreboard.sv", "wire comp_tag_ok    = ({28'd0, comp_tag} < NTAG);", "wire comp_tag_ok    = 1'b1;",
+     "test_stale_completion_is_flagged_not_absorbed"),
+    ("a tag is always free",
+     "src/rtl/mom_scoreboard.sv", "have_free = 1'b0;", "have_free = 1'b1;",
+     "test_tag_exhaustion_and_recovery"),
+    ("pin summaries show the wrong engine",
+     "src/tt_um_hydra_mom.sv", "r_disp_sticky, r_last_engine, r_irq", "r_disp_sticky, 3'd0, r_irq",
+     "test_reg_readback_and_pin_summaries"),
 ]
 
 RESULT_RE = re.compile(r"\*\*\s+(test\w*)\.(\w+)\s+(PASS|FAIL)")

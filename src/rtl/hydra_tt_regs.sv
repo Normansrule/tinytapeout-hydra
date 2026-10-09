@@ -1,7 +1,7 @@
 /*
  * hydra_tt_regs.sv
  *
- * HYDRA-130 - TT-A v2: SPI register map over the complete mom_top interface
+ * HYDRA-130 - TT-A v3 (research tile): SPI register map over mom_top
  * Copyright (c) 2026 Aleksander J. Norman
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -15,6 +15,14 @@
  * the MOM a paper most needs silicon evidence for: that the dispatch policy
  * can be RETUNED after tapeout, and that queueing under back-pressure holds
  * its contract. This block reaches all of it through four pins.
+ *
+ * v3 (2026-10-09), THE RESEARCH TILE: LASTWD is gone. Reading back the
+ * descriptor as dispatched meant carrying all 128 bits through every stage of
+ * the MOM pipeline, only to be observed here: 12,600 um^2 of flops, 10% of
+ * the tile. The host knows what it sent; RESULT, BUSY and the tag say what
+ * was done with it. The chip (hydra-skywater130, mom/) keeps LASTWD, because
+ * there the descriptor really travels on to an engine. ID reads "HYM3" so
+ * software can tell the two apart.
  *
  * ===========================================================================
  * FRAME
@@ -40,7 +48,7 @@
  * ===========================================================================
  * MAP                         len  access
  * ===========================================================================
- *   0x00 ID                     4   RO   0x48594D32 "HYM2"
+ *   0x00 ID                     4   RO   0x48594D33 "HYM3"
  *   0x01 WD                    16   RW   descriptor staging
  *   0x02 CTRL                   1   RW   [0] HOLD  (disp_accept = ~HOLD)
  *                                        [1] CAL_FREEZE  [2] CAL_RESET
@@ -50,13 +58,13 @@
  *   0x05 STATUS                 2   RO   see status_w below
  *   0x06 RESULT                 6   RO   {engine[2:0], tag[3:0], 0,
  *                                         margin[31:0], err_tag[7:0]}
- *   0x07 LASTWD                16   RO   descriptor as dispatched
+ *   0x07 (reserved)                      v2 LASTWD; reads 0, writes -> FRAME_ERR
  *   0x08 CALUPD                 2   RO   calibration update counter
  *   0x09 BUSY                   2   RO   tag busy bitmap
  *   0x0A FENCE                  1   RW   [3:0] fence tag
  *   0x0B PARAM                  6   WO   {2'b0, engine[2:0], row[42:0]}
  *   0x0C GLOBAL                 2   RW   {4'b0, bw_dma_log2, eps_mem, e_shift}
- *   0x0D INFO                   1   RO   NTAG
+ *   0x0D INFO                   1   RO   NTAG (4 on this tile)
  *   other                           read 0, write -> FRAME_ERR
  * ===========================================================================
  */
@@ -87,7 +95,6 @@ module hydra_tt_regs
   output wire                disp_accept,
   input  wire  [2:0]         disp_engine,
   input  wire  [3:0]         disp_tag,
-  input  wire  [WD_W-1:0]    disp_wd,
   output logic               comp_valid,
   output logic [3:0]         comp_tag,
   output wire  [3:0]         fence_tag,
@@ -118,11 +125,11 @@ module hydra_tt_regs
 
   localparam logic [6:0] A_ID = 7'h00, A_WD = 7'h01, A_CTRL = 7'h02,
                          A_ACTION = 7'h03, A_COMP = 7'h04, A_STATUS = 7'h05,
-                         A_RESULT = 7'h06, A_LASTWD = 7'h07, A_CALUPD = 7'h08,
+                         A_RESULT = 7'h06, A_CALUPD = 7'h08,
                          A_BUSY = 7'h09, A_FENCE = 7'h0A, A_PARAM = 7'h0B,
                          A_GLOBAL = 7'h0C, A_INFO = 7'h0D;
 
-  localparam logic [31:0] ID_VALUE = 32'h48594D32;
+  localparam logic [31:0] ID_VALUE = 32'h48594D33;
 
   function automatic logic [4:0] reg_len(input logic [6:0] a);
     case (a)
@@ -133,7 +140,6 @@ module hydra_tt_regs
       A_COMP:   reg_len = 5'd1;
       A_STATUS: reg_len = 5'd2;
       A_RESULT: reg_len = 5'd6;
-      A_LASTWD: reg_len = 5'd16;
       A_CALUPD: reg_len = 5'd2;
       A_BUSY:   reg_len = 5'd2;
       A_FENCE:  reg_len = 5'd1;
@@ -172,7 +178,6 @@ module hydra_tt_regs
   logic [3:0]      r_tag;
   logic [COST_W-1:0] r_margin;
   logic [7:0]      r_errtag;
-  logic [WD_W-1:0] r_lastwd;
 
   wire dispatched = disp_valid & disp_accept;
 
@@ -202,7 +207,6 @@ module hydra_tt_regs
       csr_wr <= 1'b0; csr_engine <= 3'd0; csr_data <= '0;
       s_disp <= 1'b0; s_unsupp <= 1'b0; s_stale <= 1'b0; s_frame <= 1'b0; s_goerr <= 1'b0;
       r_engine <= 3'd0; r_tag <= 4'd0; r_margin <= '0; r_errtag <= 8'd0;
-      r_lastwd <= '0;
     end else begin
       comp_valid <= 1'b0;
       csr_wr     <= 1'b0;
@@ -272,7 +276,6 @@ module hydra_tt_regs
         r_engine <= disp_engine;
         r_tag    <= disp_tag;
         r_margin <= obs_margin;
-        r_lastwd <= disp_wd;
         s_disp   <= 1'b1;
       end
       if (err_unsupported) begin
@@ -327,7 +330,6 @@ module hydra_tt_regs
       A_CTRL:   rval = WD_W'({param_lock_q, cal_reset_q, cal_freeze_q, hold_q});
       A_STATUS: rval = WD_W'(status_w);
       A_RESULT: rval = WD_W'({r_engine, r_tag, 1'b0, r_margin, r_errtag});
-      A_LASTWD: rval = r_lastwd;
       A_CALUPD: rval = WD_W'(obs_cal_updates);
       A_BUSY:   rval = WD_W'(busy16);
       A_FENCE:  rval = WD_W'(fence_q);

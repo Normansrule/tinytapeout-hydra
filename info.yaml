@@ -1,5 +1,27 @@
 # TinyTapeout project metadata for TT-A: the HYDRA-130 Mathematical Operation MUX.
 #
+# v3, THE RESEARCH TILE (2026-10-09): 3x4, down from 4x4.
+#
+#     v2 (signed off 2026-10-05, 4x4)  147,278 um^2 by yosys + abc   67.3% by LibreLane
+#     v3 (this)                         113,939 um^2, 11,964 cells    ~70% expected at 3x4
+#
+# What came out (see src/tt_um_hydra_mom.sv): the v1 pin personality and its
+# 128-bit shift register, the LASTWD readback (which kept 128 descriptor bits
+# alive through the whole pipeline), and four of the eight tags. The full
+# dispatcher, with all of that, is in the HYDRA-130 chip (hydra-skywater130,
+# mom/). Twelve tiles instead of sixteen is a quarter off the tile cost, and
+# 23% fewer cells (15,574 -> 11,964) is less to clock and to leak.
+#
+# The ~70% is an ESTIMATE: v2's LibreLane utilisation was 1.27x its yosys
+# area, applied to v3. PL_TARGET_DENSITY_PCT is raised to 70 in
+# src/config.json to match (TinyTapeout's own comment there says up to 80 has
+# worked). If the harden fails placement or routing, change `tiles` back to
+# "4x4" -- one line, nothing else depends on it -- and the design still saves
+# the power.
+#
+# ---------------------------------------------------------------------------
+# Earlier sizing notes, kept for the record:
+#
 # TILE SIZING — MEASURED against the real sky130 Liberty, not estimated.
 #
 #     13,734 sky130_fd_sc_hd cells
@@ -59,7 +81,7 @@ project:
   title:        "TinyTapeout-Hydra"
   author:       "Aleksander J. Norman"
   discord:      ""
-  description:  "Hardware dispatch across five compute engines using a roofline cost model that calibrates itself online from measured completion times. One shared cost engine evaluates all five in about thirteen cycles. Two personalities: the v1 serial pin interface, or an SPI register map reaching the whole dispatcher including live retuning of the cost model."
+  description:  "Research tile: hardware dispatch across five compute engines using a roofline cost model that calibrates itself online from measured completion times. One shared cost engine evaluates all five in about thirteen cycles. An SPI register map reaches the whole dispatcher, including live retuning of the cost model."
   # The design is written in SystemVerilog, but what is SUBMITTED is
   # src/project.v, which sv2v converts to Verilog-2005. This field describes
   # the submitted file.
@@ -83,39 +105,38 @@ project:
   # about thirteen cycles (three before the cost engine was shared) per descriptor either way; nothing about the design cares.
   clock_hz:     15151515
 
-  tiles: "4x4"          # v2 is 44% larger than v1 (135,203 -> 194,647 um2 of
-                        # cells, tools/sky130_area.sh): 3x4 would need ~90% density
+  tiles: "3x4"          # v3: see the top of this file. v2 needed 4x4.
 
   top_module:  "tt_um_hydra_mom"
 
   source_files:
     - "project.v"
 
-# Pin map. See src/tt_um_hydra_mom.sv for the protocol.
+# Pin map. See src/tt_um_hydra_mom.sv; the register map is in src/rtl/hydra_tt_regs.sv.
 pinout:
-  ui[0]: "LEGACY sdi - serial descriptor data, MSB first / REGISTER SCK"
-  ui[1]: "LEGACY shift - shift sdi into the descriptor register / REGISTER COPI"
-  ui[2]: "LEGACY go - present the descriptor (edge detected) / REGISTER CSn"
-  ui[3]: "LEGACY comp - pulse a completion for the tag on ui[7:4]"
-  ui[4]: "LEGACY comp_tag[0] / strap at reset: hold ui[7:4]=0xA for REGISTER"
-  ui[5]: "LEGACY comp_tag[1] / strap at reset"
-  ui[6]: "LEGACY comp_tag[2] / strap at reset"
-  ui[7]: "LEGACY comp_tag[3] / strap at reset"
+  ui[0]: "SCK - SPI clock, mode 0, at most clk/8"
+  ui[1]: "COPI - SPI data in"
+  ui[2]: "CSn - SPI chip select, active low"
+  ui[3]: "unused"
+  ui[4]: "unused"
+  ui[5]: "unused"
+  ui[6]: "unused"
+  ui[7]: "unused"
 
-  uo[0]: "LEGACY engine[0] / REGISTER CIPO"
-  uo[1]: "LEGACY engine[1] / REGISTER irq (any sticky flag set)"
-  uo[2]: "LEGACY engine[2] / REGISTER engine[0]"
-  uo[3]: "LEGACY dispatched / REGISTER engine[1]"
-  uo[4]: "LEGACY unsupported / REGISTER engine[2]"
-  uo[5]: "LEGACY stale (sticky) / REGISTER dispatched"
+  uo[0]: "CIPO - SPI data out"
+  uo[1]: "irq - a sticky error flag is set"
+  uo[2]: "engine[0] - engine of the last dispatch"
+  uo[3]: "engine[1]"
+  uo[4]: "engine[2]"
+  uo[5]: "dispatched - sticky until CLEAR_STICKY"
   uo[6]: "any_busy - at least one tag outstanding"
-  uo[7]: "ready - the MOM can accept a descriptor"
+  uo[7]: "ready - the dispatcher can accept a descriptor"
 
-  uio[0]: "tag[0] - tag allocated by the last dispatch"
+  uio[0]: "tag[0] - tag of the last dispatch (0 to 3)"
   uio[1]: "tag[1]"
-  uio[2]: "tag[2]"
-  uio[3]: "tag[3]"
-  uio[4]: "margin[0] - runner-up margin: LEGACY saturated top nibble, REGISTER log2 scale"
+  uio[2]: "tag[2] - always 0 (four tags)"
+  uio[3]: "tag[3] - always 0"
+  uio[4]: "margin[0] - 1 + floor(log2(runner-up margin)), 0 if none"
   uio[5]: "margin[1]"
   uio[6]: "margin[2]"
   uio[7]: "margin[3]"
