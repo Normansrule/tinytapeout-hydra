@@ -1181,7 +1181,6 @@ module hydra_tt_regs (
 	disp_accept,
 	disp_engine,
 	disp_tag,
-	disp_wd,
 	comp_valid,
 	comp_tag,
 	fence_tag,
@@ -1226,7 +1225,6 @@ module hydra_tt_regs (
 	output wire disp_accept;
 	input wire [2:0] disp_engine;
 	input wire [3:0] disp_tag;
-	input wire [127:0] disp_wd;
 	output reg comp_valid;
 	output reg [3:0] comp_tag;
 	output wire [3:0] fence_tag;
@@ -1260,14 +1258,13 @@ module hydra_tt_regs (
 	localparam [6:0] A_COMP = 7'h04;
 	localparam [6:0] A_STATUS = 7'h05;
 	localparam [6:0] A_RESULT = 7'h06;
-	localparam [6:0] A_LASTWD = 7'h07;
 	localparam [6:0] A_CALUPD = 7'h08;
 	localparam [6:0] A_BUSY = 7'h09;
 	localparam [6:0] A_FENCE = 7'h0a;
 	localparam [6:0] A_PARAM = 7'h0b;
 	localparam [6:0] A_GLOBAL = 7'h0c;
 	localparam [6:0] A_INFO = 7'h0d;
-	localparam [31:0] ID_VALUE = 32'h48594d32;
+	localparam [31:0] ID_VALUE = 32'h48594d33;
 	function automatic [4:0] reg_len;
 		input reg [6:0] a;
 		case (a)
@@ -1278,7 +1275,6 @@ module hydra_tt_regs (
 			A_COMP: reg_len = 5'd1;
 			A_STATUS: reg_len = 5'd2;
 			A_RESULT: reg_len = 5'd6;
-			A_LASTWD: reg_len = 5'd16;
 			A_CALUPD: reg_len = 5'd2;
 			A_BUSY: reg_len = 5'd2;
 			A_FENCE: reg_len = 5'd1;
@@ -1315,7 +1311,6 @@ module hydra_tt_regs (
 	reg [3:0] r_tag;
 	reg [31:0] r_margin;
 	reg [7:0] r_errtag;
-	reg [127:0] r_lastwd;
 	wire dispatched = disp_valid & disp_accept;
 	wire frame_ok = ((have_cmd && !cmd_rd) && writable(cmd_addr)) && (n_data == reg_len(cmd_addr));
 	wire frame_bad = (have_cmd && !cmd_rd) && !frame_ok;
@@ -1354,7 +1349,6 @@ module hydra_tt_regs (
 			r_tag <= 4'd0;
 			r_margin <= 1'sb0;
 			r_errtag <= 8'd0;
-			r_lastwd <= 1'sb0;
 		end
 		else begin
 			comp_valid <= 1'b0;
@@ -1424,7 +1418,6 @@ module hydra_tt_regs (
 				r_engine <= disp_engine;
 				r_tag <= disp_tag;
 				r_margin <= obs_margin;
-				r_lastwd <= disp_wd;
 				s_disp <= 1'b1;
 			end
 			if (err_unsupported) begin
@@ -1478,7 +1471,6 @@ module hydra_tt_regs (
 			A_CTRL: rval = sv2v_cast_D3020({param_lock_q, cal_reset_q, cal_freeze_q, hold_q});
 			A_STATUS: rval = sv2v_cast_D3020(status_w);
 			A_RESULT: rval = sv2v_cast_D3020({r_engine, r_tag, 1'b0, r_margin, r_errtag});
-			A_LASTWD: rval = r_lastwd;
 			A_CALUPD: rval = sv2v_cast_D3020(obs_cal_updates);
 			A_BUSY: rval = sv2v_cast_D3020(busy16);
 			A_FENCE: rval = sv2v_cast_D3020(fence_q);
@@ -1557,37 +1549,8 @@ module tt_um_hydra_mom (
 		.scan_rst_n(1'b1),
 		.rst_n(rst_n_sync)
 	);
-	localparam [31:0] NTAG = 8;
-	wire _unused = &{ena, uio_in, 1'b0};
-	reg reg_mode;
-	always @(posedge clk)
-		if (!rst_n)
-			reg_mode <= ui_in[7:4] == 4'ha;
-	wire sdi = ui_in[0];
-	wire shift = ui_in[1];
-	wire go = ui_in[2];
-	wire comp = ui_in[3];
-	wire [3:0] comp_tag_in = ui_in[7:4];
-	localparam [31:0] mom_pkg_WD_W = 128;
-	reg [127:0] sr;
-	always @(posedge clk or negedge rst_n_sync)
-		if (!rst_n_sync)
-			sr <= 1'sb0;
-		else if (!reg_mode && shift)
-			sr <= {sr[126:0], sdi};
-	reg go_q;
-	reg comp_q;
-	always @(posedge clk or negedge rst_n_sync)
-		if (!rst_n_sync) begin
-			go_q <= 1'b0;
-			comp_q <= 1'b0;
-		end
-		else begin
-			go_q <= go;
-			comp_q <= comp;
-		end
-	wire go_pulse = (~reg_mode & go) & ~go_q;
-	wire comp_pulse = (~reg_mode & comp) & ~comp_q;
+	localparam [31:0] NTAG = 4;
+	wire _unused = &{ena, uio_in, ui_in[7:3], 1'b0};
 	wire spi_cipo;
 	wire cs_start;
 	wire cs_end;
@@ -1600,9 +1563,9 @@ module tt_um_hydra_mom (
 	hydra_tt_spi u_spi(
 		.clk(clk),
 		.rst_n(rst_n_sync),
-		.sck_i(reg_mode & ui_in[0]),
-		.copi_i(reg_mode & ui_in[1]),
-		.csn_i(~reg_mode | ui_in[2]),
+		.sck_i(ui_in[0]),
+		.copi_i(ui_in[1]),
+		.csn_i(ui_in[2]),
 		.cipo_o(spi_cipo),
 		.cs_start(cs_start),
 		.cs_end(cs_end),
@@ -1622,6 +1585,7 @@ module tt_um_hydra_mom (
 	wire r_cal_reset;
 	wire r_irq;
 	wire r_disp_sticky;
+	localparam [31:0] mom_pkg_WD_W = 128;
 	wire [127:0] r_wd;
 	wire [3:0] r_comp_tag;
 	wire [3:0] r_fence_tag;
@@ -1643,7 +1607,7 @@ module tt_um_hydra_mom (
 	wire err_stale_comp;
 	localparam [31:0] mom_pkg_COST_W = 32;
 	wire [31:0] obs_margin;
-	wire [7:0] obs_tag_busy;
+	wire [3:0] obs_tag_busy;
 	wire [15:0] obs_cal_updates;
 	wire wd_ready;
 	wire fence_busy;
@@ -1664,7 +1628,6 @@ module tt_um_hydra_mom (
 		.disp_accept(r_disp_accept),
 		.disp_engine(disp_engine),
 		.disp_tag(disp_tag),
-		.disp_wd(disp_wd),
 		.comp_valid(r_comp_valid),
 		.comp_tag(r_comp_tag),
 		.fence_tag(r_fence_tag),
@@ -1690,38 +1653,37 @@ module tt_um_hydra_mom (
 		.last_tag(r_last_tag),
 		.margin_nib(r_margin_nib)
 	);
-	wire disp_accept = (reg_mode ? r_disp_accept : 1'b1);
 	function automatic [127:0] sv2v_cast_128;
 		input reg [127:0] inp;
 		sv2v_cast_128 = inp;
 	endfunction
 	mom_top #(
 		.NTAG(NTAG),
-		.QMAX(4)
+		.QMAX(NTAG)
 	) u_mom(
 		.clk(clk),
 		.rst_n(rst_n_sync),
-		.wd_valid((reg_mode ? r_wd_valid : go_pulse)),
+		.wd_valid(r_wd_valid),
 		.wd_ready(wd_ready),
-		.wd(sv2v_cast_128((reg_mode ? r_wd : sr))),
+		.wd(sv2v_cast_128(r_wd)),
 		.disp_valid(disp_valid),
-		.disp_accept(disp_accept),
+		.disp_accept(r_disp_accept),
 		.disp_engine(disp_engine),
 		.disp_tag(disp_tag),
 		.disp_wd(disp_wd),
-		.comp_valid((reg_mode ? r_comp_valid : comp_pulse)),
-		.comp_tag((reg_mode ? r_comp_tag : comp_tag_in)),
-		.fence_tag((reg_mode ? r_fence_tag : 4'd0)),
+		.comp_valid(r_comp_valid),
+		.comp_tag(r_comp_tag),
+		.fence_tag(r_fence_tag),
 		.fence_busy(fence_busy),
-		.csr_wr(reg_mode & r_csr_wr),
-		.csr_priv(reg_mode & r_csr_priv),
-		.csr_engine((reg_mode ? r_csr_engine : 3'd0)),
-		.csr_data((reg_mode ? r_csr_data : {mom_pkg_EPARAM_W {1'b0}})),
-		.csr_bw_dma_log2((reg_mode ? r_bw : 4'd4)),
-		.csr_eps_mem((reg_mode ? r_eps : 4'd12)),
-		.csr_e_shift((reg_mode ? r_esh : 4'd8)),
-		.csr_cal_freeze(reg_mode & r_cal_freeze),
-		.csr_cal_reset(reg_mode & r_cal_reset),
+		.csr_wr(r_csr_wr),
+		.csr_priv(r_csr_priv),
+		.csr_engine(r_csr_engine),
+		.csr_data(r_csr_data),
+		.csr_bw_dma_log2(r_bw),
+		.csr_eps_mem(r_eps),
+		.csr_e_shift(r_esh),
+		.csr_cal_freeze(r_cal_freeze),
+		.csr_cal_reset(r_cal_reset),
 		.err_unsupported(err_unsupported),
 		.err_tag(err_tag),
 		.err_stale_comp(err_stale_comp),
@@ -1729,45 +1691,9 @@ module tt_um_hydra_mom (
 		.obs_cal_updates(obs_cal_updates),
 		.obs_tag_busy(obs_tag_busy)
 	);
-	reg [2:0] l_engine;
-	reg [3:0] l_tag;
-	reg l_disp;
-	reg l_unsupp;
-	reg l_stale;
-	reg [3:0] l_margin;
-	wire [3:0] margin_nib = (obs_margin[31:16] != {16 {1'sb0}} ? 4'hf : obs_margin[15:12]);
-	always @(posedge clk or negedge rst_n_sync)
-		if (!rst_n_sync) begin
-			l_engine <= 3'd0;
-			l_tag <= 4'd0;
-			l_disp <= 1'b0;
-			l_unsupp <= 1'b0;
-			l_margin <= 4'd0;
-		end
-		else begin
-			if (go_pulse) begin
-				l_disp <= 1'b0;
-				l_unsupp <= 1'b0;
-			end
-			if (disp_valid) begin
-				l_engine <= disp_engine;
-				l_tag <= disp_tag;
-				l_margin <= margin_nib;
-				l_disp <= 1'b1;
-			end
-			if (err_unsupported)
-				l_unsupp <= 1'b1;
-		end
-	always @(posedge clk or negedge rst_n_sync)
-		if (!rst_n_sync)
-			l_stale <= 1'b0;
-		else if (err_stale_comp)
-			l_stale <= 1'b1;
-	wire ready = wd_ready;
-	wire any_busy = |obs_tag_busy;
-	assign uo_out = (reg_mode ? {ready, any_busy, r_disp_sticky, r_last_engine, r_irq, spi_cipo} : {ready, any_busy, l_stale, l_unsupp, l_disp, l_engine});
-	assign uio_out = (reg_mode ? {r_margin_nib, r_last_tag} : {l_margin, l_tag});
+	assign uo_out = {wd_ready, |obs_tag_busy, r_disp_sticky, r_last_engine, r_irq, spi_cipo};
+	assign uio_out = {r_margin_nib, r_last_tag};
 	assign uio_oe = 8'hff;
-	wire _unused_spi = &{cs_active, 1'b0};
+	wire _unused_spi = &{cs_active, disp_wd, 1'b0};
 endmodule
 `default_nettype wire

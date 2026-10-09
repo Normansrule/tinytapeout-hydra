@@ -37,49 +37,54 @@
  * what Fmax it closes at, not how fast a descriptor can be loaded.
  *
  * ===========================================================================
- * PIN MAP
+ * v3 (2026-10-09): THE RESEARCH TILE
  * ===========================================================================
- * ui_in[0]    sdi        serial descriptor data, MSB first
- * ui_in[1]    shift      shift sdi into the descriptor register on this edge
- * ui_in[2]    go         present the descriptor to the MOM and latch the result
- * ui_in[3]    comp       pulse a completion for the tag on ui_in[7:4]
- * ui_in[7:4]  comp_tag   tag to complete
+ * This repository is the silicon experiment, not the product. The full
+ * dispatcher, with both host personalities and 8 tags, now lives in the
+ * HYDRA-130 chip (hydra-skywater130, mom/), next to the CPU, GPU and TPU it
+ * schedules. This tile keeps only what the experiment needs -- the cost
+ * model, the scoreboard, calibration, and the register map that observes
+ * them -- and drops what costs area and power without answering a question:
  *
- * uo_out[2:0] engine     selected engine index
- * uo_out[3]   dispatched a dispatch occurred for the last `go`
- * uo_out[4]   unsupported no engine could execute the last descriptor
- * uo_out[5]   stale      a completion arrived for a tag not in flight
- * uo_out[6]   any_busy   at least one tag outstanding
- * uo_out[7]   ready      the MOM can accept a descriptor
- *
- * uio_out[3:0] tag       tag allocated by the last dispatch
- * uio_out[7:4] margin    top nibble of the runner-up margin, saturated
- * uio_oe                 all ones: every bidirectional is an output here
+ *   LEGACY PERSONALITY REMOVED. The v1 pin protocol needed a 128-bit shift
+ *     register, edge detectors and a result latch, and every bit of that
+ *     toggled on every shift. The register map sees everything the legacy
+ *     pins could, and more (the full 32-bit margin, the descriptor as
+ *     dispatched, calibration counters). The chip keeps legacy mode, and its
+ *     tb_v1_v2_diff still proves it pin-for-pin against v1.
+ *   NO DESCRIPTOR READBACK. v2's LASTWD register read back all 128 bits of
+ *     the descriptor as dispatched, which kept every bit alive through every
+ *     pipeline stage: 12,600 um^2 for an echo of what the host just sent.
+ *   4 TAGS, NOT 8. The scoreboard is the largest block; each tag holds a
+ *     start time and a prediction. Four in flight is enough to exercise
+ *     exhaustion, back-pressure and out-of-order completion.
  *
  * ===========================================================================
- * v2 (SESSION 179): TWO PERSONALITIES, SELECTED BY STRAP AT RESET
+ * PIN MAP (SPI mode 0, SCK <= clk/8; the register map is in hydra_tt_regs.sv)
  * ===========================================================================
- * LEGACY (default): the v1 pin map above, unchanged. Every v1 test runs
- *   unmodified against v2, and tb_v1_v2_diff compares v2 against the v1 RTL
- *   pin-for-pin on random stimulus.
- * REGISTER: hold ui_in[7:4] = 4'hA while rst_n is low. Then
- *   ui_in[0] SCK   ui_in[1] COPI   ui_in[2] CSn     (SPI mode 0, <= clk/8)
- *   uo_out[0] CIPO  uo_out[1] IRQ  uo_out[4:2] engine  uo_out[5] dispatched
- *   uo_out[6] any_busy  uo_out[7] ready     uio_out = {margin, tag} as v1
- *   and the whole mom_top interface is reachable: see hydra_tt_regs.sv.
- * The strap is sampled on every clock while reset is held, so it needs no
- * reset value of its own and is stable from the first cycle after reset.
- * A host that holds ui_in at 0 through reset (every v1 test, and the
- * demoboard default) gets LEGACY. 4'hA was chosen because a v1 host never
- * drives ui_in[7:4] during reset.
+ * ui_in[0]     SCK
+ * ui_in[1]     COPI
+ * ui_in[2]     CSn         idle high; a host that holds it low through reset
+ *                          gets one empty frame, which is not an error
+ * ui_in[7:3]   unused      (v2 sampled ui_in[7:4] as a personality strap;
+ *                          v3 ignores it, so a v2 host still works)
  *
- * v2 ALSO FIXES the v1 margin nibble. v1 saturated when
- * obs_margin[31:12] != 0 and otherwise output obs_margin[15:12] -- a subset
- * of the bits just tested, so it could only ever read 0 or F. Both v1 runs
- * in session 144 logged margin 0. v2 saturates on [31:16], as the comment
- * ("anything above 15 * 4096 reads as clear") intended.
+ * uo_out[0]    CIPO
+ * uo_out[1]    IRQ         a sticky error flag is set
+ * uo_out[4:2]  engine      engine of the last dispatch
+ * uo_out[5]    dispatched  sticky until CLEAR_STICKY
+ * uo_out[6]    any_busy    at least one tag outstanding
+ * uo_out[7]    ready       the MOM can accept a descriptor
+ *
+ * uio_out[3:0] tag         tag of the last dispatch (0..3)
+ * uio_out[7:4] margin      1 + floor(log2(runner-up margin)), 0 if none
+ * uio_oe                   all ones: every bidirectional is an output
+ *
+ * v2 history: v2 carried both personalities, selected by a reset strap
+ * (ui_in[7:4] = 4'hA for registers), and fixed the v1 margin nibble, which
+ * could only ever read 0 or F.
+ *
  * ===========================================================================
- *
  * A LESSON CARRIED OVER FROM ASICIRIFIC
  * ===========================================================================
  * The `tiles` value in info.yaml and the DIE_AREA in the hardened config must
@@ -130,45 +135,15 @@ module tt_um_hydra_mom
   // moment rst_n falls and releases only after STAGES clean clock edges.
   // Recovery checks now start at a REGISTER, inside the clock domain.
   //
-  // The mode strap is the one deliberate exception: it is sampled from the
-  // raw pin while reset is held, which is when the strap is valid.
   wire rst_n_sync;
   hydra_rst_sync #(.STAGES(2)) u_rst_sync (
     .clk(clk), .arst_n(rst_n), .scan_mode(1'b0), .scan_rst_n(1'b1),
     .rst_n(rst_n_sync));
 
-  localparam int unsigned NTAG = 8;
+  // Four tags: see the header. The chip (mom/hydra_mom_pins.sv) uses eight.
+  localparam int unsigned NTAG = 4;
 
-  wire _unused = &{ena, uio_in, 1'b0};
-
-  // ---------------------------------------------------------------------------
-  // Personality strap.
-  // ---------------------------------------------------------------------------
-  logic reg_mode;
-  always_ff @(posedge clk)
-    if (!rst_n) reg_mode <= (ui_in[7:4] == 4'hA);
-
-  // =========================================================================
-  // LEGACY front end -- identical to v1
-  // =========================================================================
-  wire sdi      = ui_in[0];
-  wire shift    = ui_in[1];
-  wire go       = ui_in[2];
-  wire comp     = ui_in[3];
-  wire [3:0] comp_tag_in = ui_in[7:4];
-
-  logic [WD_W-1:0] sr;
-  always_ff @(posedge clk or negedge rst_n_sync)
-    if (!rst_n_sync)                  sr <= '0;
-    else if (!reg_mode && shift) sr <= {sr[WD_W-2:0], sdi};
-
-  logic go_q, comp_q;
-  always_ff @(posedge clk or negedge rst_n_sync)
-    if (!rst_n_sync) begin go_q <= 1'b0; comp_q <= 1'b0; end
-    else        begin go_q <= go;   comp_q <= comp; end
-
-  wire go_pulse   = ~reg_mode & go   & ~go_q;
-  wire comp_pulse = ~reg_mode & comp & ~comp_q;
+  wire _unused = &{ena, uio_in, ui_in[7:3], 1'b0};
 
   // =========================================================================
   // REGISTER front end
@@ -177,12 +152,9 @@ module tt_um_hydra_mom
   wire [7:0] rx_byte, tx_byte;
   wire [4:0] rx_index;
 
-  // Pins are gated off in legacy mode so the SPI block sees an idle bus and
-  // cannot mistake legacy traffic for frames.
   hydra_tt_spi u_spi (
     .clk(clk), .rst_n(rst_n_sync),
-    .sck_i(reg_mode & ui_in[0]), .copi_i(reg_mode & ui_in[1]),
-    .csn_i(~reg_mode | ui_in[2]), .cipo_o(spi_cipo),
+    .sck_i(ui_in[0]), .copi_i(ui_in[1]), .csn_i(ui_in[2]), .cipo_o(spi_cipo),
     .cs_start(cs_start), .cs_end(cs_end), .cs_active(cs_active),
     .rx_valid(rx_valid), .rx_byte(rx_byte), .rx_index(rx_index),
     .tx_load(tx_load), .tx_byte(tx_byte)
@@ -196,7 +168,7 @@ module tt_um_hydra_mom
   wire [EPARAM_W-1:0] r_csr_data;
 
   // =========================================================================
-  // MOM -- one instance, inputs selected by personality
+  // MOM
   // =========================================================================
   wire               disp_valid;
   wire  [2:0]        disp_engine;
@@ -217,7 +189,7 @@ module tt_um_hydra_mom
     .rx_byte(rx_byte), .rx_index(rx_index), .tx_load(tx_load), .tx_byte(tx_byte),
     .wd_valid(r_wd_valid), .wd_ready(wd_ready), .wd(r_wd),
     .disp_valid(disp_valid), .disp_accept(r_disp_accept),
-    .disp_engine(disp_engine), .disp_tag(disp_tag), .disp_wd(disp_wd),
+    .disp_engine(disp_engine), .disp_tag(disp_tag),
     .comp_valid(r_comp_valid), .comp_tag(r_comp_tag),
     .fence_tag(r_fence_tag), .fence_busy(fence_busy),
     .csr_wr(r_csr_wr), .csr_priv(r_csr_priv), .csr_engine(r_csr_engine),
@@ -230,24 +202,17 @@ module tt_um_hydra_mom
     .last_tag(r_last_tag), .margin_nib(r_margin_nib)
   );
 
-  wire disp_accept = reg_mode ? r_disp_accept : 1'b1;
-
-  mom_top #(.NTAG(NTAG), .QMAX(4)) u_mom (
+  mom_top #(.NTAG(NTAG), .QMAX(NTAG)) u_mom (
     .clk(clk), .rst_n(rst_n_sync),
-    .wd_valid(reg_mode ? r_wd_valid : go_pulse), .wd_ready(wd_ready),
-    .wd(work_desc_t'(reg_mode ? r_wd : sr)),
-    .disp_valid(disp_valid), .disp_accept(disp_accept),
+    .wd_valid(r_wd_valid), .wd_ready(wd_ready), .wd(work_desc_t'(r_wd)),
+    .disp_valid(disp_valid), .disp_accept(r_disp_accept),
     .disp_engine(disp_engine), .disp_tag(disp_tag), .disp_wd(disp_wd),
-    .comp_valid(reg_mode ? r_comp_valid : comp_pulse),
-    .comp_tag(reg_mode ? r_comp_tag : comp_tag_in),
-    .fence_tag(reg_mode ? r_fence_tag : 4'd0), .fence_busy(fence_busy),
-    .csr_wr(reg_mode & r_csr_wr), .csr_priv(reg_mode & r_csr_priv),
-    .csr_engine(reg_mode ? r_csr_engine : 3'd0),
-    .csr_data(reg_mode ? r_csr_data : {EPARAM_W{1'b0}}),
-    .csr_bw_dma_log2(reg_mode ? r_bw  : 4'd4),
-    .csr_eps_mem    (reg_mode ? r_eps : 4'd12),
-    .csr_e_shift    (reg_mode ? r_esh : 4'd8),
-    .csr_cal_freeze(reg_mode & r_cal_freeze), .csr_cal_reset(reg_mode & r_cal_reset),
+    .comp_valid(r_comp_valid), .comp_tag(r_comp_tag),
+    .fence_tag(r_fence_tag), .fence_busy(fence_busy),
+    .csr_wr(r_csr_wr), .csr_priv(r_csr_priv), .csr_engine(r_csr_engine),
+    .csr_data(r_csr_data),
+    .csr_bw_dma_log2(r_bw), .csr_eps_mem(r_eps), .csr_e_shift(r_esh),
+    .csr_cal_freeze(r_cal_freeze), .csr_cal_reset(r_cal_reset),
     .err_unsupported(err_unsupported), .err_tag(err_tag),
     .err_stale_comp(err_stale_comp),
     .obs_margin(obs_margin), .obs_cal_updates(obs_cal_updates),
@@ -255,53 +220,15 @@ module tt_um_hydra_mom
   );
 
   // =========================================================================
-  // LEGACY result latch -- identical to v1 except the margin fix
-  // =========================================================================
-  logic [2:0]  l_engine;
-  logic [3:0]  l_tag;
-  logic        l_disp, l_unsupp, l_stale;
-  logic [3:0]  l_margin;
-
-  wire [3:0] margin_nib = (obs_margin[COST_W-1:16] != '0) ? 4'hF
-                                                          : obs_margin[15:12];
-
-  always_ff @(posedge clk or negedge rst_n_sync) begin
-    if (!rst_n_sync) begin
-      l_engine <= 3'd0; l_tag <= 4'd0;
-      l_disp   <= 1'b0; l_unsupp <= 1'b0; l_margin <= 4'd0;
-    end else begin
-      if (go_pulse) begin
-        l_disp   <= 1'b0;
-        l_unsupp <= 1'b0;
-      end
-      if (disp_valid) begin
-        l_engine <= disp_engine;
-        l_tag    <= disp_tag;
-        l_margin <= margin_nib;
-        l_disp   <= 1'b1;
-      end
-      if (err_unsupported) l_unsupp <= 1'b1;
-    end
-  end
-
-  always_ff @(posedge clk or negedge rst_n_sync)
-    if (!rst_n_sync)              l_stale <= 1'b0;
-    else if (err_stale_comp) l_stale <= 1'b1;
-
-  // =========================================================================
   // Pins
   // =========================================================================
-  wire ready    = wd_ready;
-  wire any_busy = |obs_tag_busy;
+  assign uo_out  = { wd_ready, |obs_tag_busy, r_disp_sticky, r_last_engine, r_irq, spi_cipo };
+  assign uio_out = { r_margin_nib, r_last_tag };
+  assign uio_oe  = 8'hFF;      // every bidirectional is an output
 
-  assign uo_out = reg_mode
-    ? { ready, any_busy, r_disp_sticky, r_last_engine, r_irq, spi_cipo }
-    : { ready, any_busy, l_stale, l_unsupp, l_disp, l_engine };
-
-  assign uio_out = reg_mode ? { r_margin_nib, r_last_tag } : { l_margin, l_tag };
-  assign uio_oe  = 8'hFF;      // every bidirectional is an output, both modes
-
-  wire _unused_spi = &{cs_active, 1'b0};
+  // The descriptor as dispatched is not observed on this tile (see the
+  // header), so synthesis drops the pipeline bits that carried only it.
+  wire _unused_spi = &{cs_active, disp_wd, 1'b0};
 
 endmodule
 

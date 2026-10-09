@@ -1,31 +1,60 @@
 ![gds](../../workflows/gds/badge.svg) ![docs](../../workflows/docs/badge.svg) ![test](../../workflows/test/badge.svg)
 
 <p align="center">
-  <img src="docs/img/tile_hero.svg" width="100%" alt="tt_um_hydra_mom: a work dispatcher on a 4 by 4 Tiny Tapeout tile. A descriptor is shifted in on the input pins, one shared cost engine costs five compute engines in turn, and the cheapest is reported on the output pins. Timing closes at every corner; sign-off is clean; all 17 tests pass on the hardened netlist.">
+  <img src="docs/img/tile_hero.svg" width="100%" alt="tt_um_hydra_mom, the HYDRA-130 research tile on 3 by 4 Tiny Tapeout tiles. A descriptor is written over SPI, one shared cost engine costs five compute engines in turn, and the cheapest is reported on the output pins. The v3 harden is pending; the last signed-off harden, v2, closed timing at every corner.">
 </p>
 
-**A hardware scheduler in 4×4 Tiny Tapeout tiles.** Give it a unit of work — a
-matrix multiply, a vector operation, a polynomial transform — and it predicts
-how long each of five compute engines would take, sends the work to the
-cheapest, then *measures what actually happened* and corrects its own model.
-No firmware in the loop: the prediction, the choice and the correction are
-all hardware.
+**The research tile of HYDRA-130: one question, on as little silicon as it
+takes to answer it.** Can a hardware scheduler predict how long work will take
+on five different engines, choose the cheapest, then *measure what actually
+happened* and correct its own model, with no firmware in the loop?
 
-![The hardened HYDRA-130 tile](docs/img/layout.png)
+Give it a unit of work — a matrix multiply, a vector operation, a polynomial
+transform — and it costs each of five compute engines with a roofline model,
+picks the cheapest, and when the work completes, moves a per-engine,
+per-operation factor toward the truth.
 
-*The real layout: every standard cell and wire in the tile, rendered from the
-hardened GDS by Tiny Tapeout's own tool (`./tt/tt_tool.py --create-png`).*
+This repository is the **experiment**, not the product. The full chip, with
+the CPU, GPU and TPU this dispatcher schedules, is
+[hydra-skywater130](https://github.com/Normansrule/hydra-skywater130). The
+two share the dispatcher's cost model, scoreboard and calibration modules
+file for file; everything else here was cut to the experiment.
+
+## What v3 cut, and why
+
+| | v2 (4×4, signed off) | v3, this tile |
+|---|---|---|
+| Tiles | 16 | **12**, a quarter off the tile cost |
+| Cells, yosys + abc on sky130 | 15,574 | **11,964** |
+| Cell area | 147,278 µm² | **113,939 µm²** |
+| Host interfaces | v1 serial pins **and** SPI, strapped at reset | SPI only |
+| Tags in flight | 8 | 4 |
+| Descriptor readback (LASTWD) | yes | no |
+| Tests | 17 | 18 |
+
+- **The serial pins went.** v1's protocol shifted the 128-bit descriptor in
+  one bit per clock, through a shift register that toggled on every shift.
+  The register map sees everything the pins could, and more: the full 32-bit
+  margin, live parameter retuning, calibration counters.
+- **The descriptor readback went.** Reading back the descriptor as dispatched
+  kept all 128 of its bits alive through every pipeline stage, only to be
+  observed: 12,600 µm², a tenth of the tile, to echo what the host just sent.
+  On the chip the descriptor travels on to an engine, so the chip keeps it.
+- **Four tags, not eight.** The scoreboard is the largest block. Four in
+  flight still exercise exhaustion, back-pressure and out-of-order completion.
+
+Nothing in the cost model, the calibration loop or the decision changed. The
+same descriptors choose the same engines.
 
 | | |
 |---|---|
 | **Engines it chooses between** | scalar CPU · SIMD vector unit · 4×4 INT8 systolic array · number-theoretic transform · crypto datapath |
 | **Cost model** | roofline: compute time vs memory time per engine, plus queue depth and an energy term |
-| **Calibration** | every completion reports its real duration; a per-engine factor moves toward the truth |
+| **Calibration** | every completion reports its real duration; a per-engine, per-operation factor moves toward the truth |
 | **Decision latency** | about 13 cycles — one shared cost engine evaluates all five in turn |
-| **Interfaces** | two personalities, strapped at reset: the v1 serial pins, or an SPI register map |
-| **Clock** | 15.15 MHz (66 ns) — every corner meets setup; slow-corner slack +2.20 ns; sign-off clean |
-| **Area** | 144,505 µm² of standard cells by synthesis, 26% smaller than five parallel engines |
-| **Tiles** | 4 × 4 |
+| **Interface** | SPI register map, mode 0, three pins; status summaries on the outputs |
+| **Clock** | 15.15 MHz (66 ns) |
+| **Tiles** | 3 × 4 |
 
 ## Pinout
 
@@ -48,30 +77,48 @@ decision** as the parallel one on every descriptor it is given.
 
 ## Status
 
+**v3 is not hardened yet.** Its 3×4 utilisation is an estimate, about 70%,
+from v2's ratio of LibreLane area to synthesis area; `src/config.json` raises
+the placement density target to 70 to match. If the harden fails placement or
+routing, `tiles` in `info.yaml` goes back to `"4x4"` — one line — and the cuts
+still save the power.
+
+The last signed-off harden is v2's, the same cost model with the parts above
+still in it:
+
+![The hardened v2 tile](docs/img/layout.png)
+
+*v2's real layout: every standard cell and wire, rendered from the hardened
+GDS by Tiny Tapeout's own tool (`./tt/tt_tool.py --create-png`).*
+
 ![Setup slack per process corner](docs/img/timing.svg)
 
-| check | result |
+| v2 check, 2026-10-05 | result |
 |---|---|
 | Hardening, all 80 stages | **complete** |
 | Layout versus schematic | **match** — 18,773 devices, 18,637 nets |
 | Design rule check (Magic) | **clean** |
-| Setup timing at 66 ns | **met at all nine corners** — slow corner +2.199 ns |
+| Setup timing at 66 ns | **met at all nine corners** — slow corner slack **+2.20 ns** |
 | Hold timing | **met at all nine corners** |
 | Antenna | **clean** — six repair passes cleared the last net |
 | Utilisation | **67.3%** of the 4×4 tile |
 | Gate-level simulation | **17 / 17** on the hardened netlist (2026-10-07) |
-| Tile tests, RTL | 17 / 17 |
 
-Honest reading: timing is closed. What closed it was releasing the reset
-through a synchroniser, not a longer clock — the same 66 ns failed without it.
-Sign-off is clean, and the hardened netlist passes the same 17 tests as the
-register-transfer-level design.
+| v3 check | result |
+|---|---|
+| Tile tests, RTL | **18 / 18** |
+| Deliberate breaks caught (`test/mutate_sim.py`) | **15 / 15**, each by the test named for it |
+| Harden, gate level | pending |
 
 ## How to test
 
-With the Tiny Tapeout demo board, select `tt_um_hydra_mom`. Strap `ui[7:4] =
-0xA` during reset for the register personality, or leave it for the serial
-one. `docs/info.md` has the full protocol and a worked example.
+With the Tiny Tapeout demo board, select `tt_um_hydra_mom` and drive SPI on
+`ui[0]` (SCK), `ui[1]` (COPI) and `ui[2]` (CSn). Write the descriptor to
+register `0x01`, write `0x01` to `0x03` (GO), read the result from `0x06`.
+[`docs/info.md`](docs/info.md) has the register map and a worked example.
+Software written for v2's register personality works unchanged: v3 ignores
+the reset strap. Only the ID (`HYM3`), the tag count and the missing LASTWD
+register differ.
 
 ## Part of HYDRA-130
 
@@ -84,14 +131,16 @@ full sky130 design and the FPGA images, **not on this tile**:
 - a root of trust after Caliptra's discipline: key vault (proved never to leak), mailbox (proved mutually exclusive), SHA-256, extend-only measurement register
 - RISC-V security instructions: ratified Zknh plus a custom extension with no key-read instruction
 - an IEEE 1149.1 test port beside the serial bridge — two independent ways in
+- the dispatcher in full: both host interfaces, eight tags, the descriptor readback
 
 ## Verification
 
-The tile's tests run from the pins only, in both personalities. The parent
-repository, [hydra-skywater130](https://github.com/Normansrule/hydra-skywater130),
-holds the engines, the proofs and the rest of the chip: the dispatcher's
-decision equivalence, formal proofs of every port contract, mutation testing
-of every bench, and independent models for each engine.
+The tile's tests run from the pins only. The parent repository holds the
+engines, the proofs and the rest of the chip: the dispatcher's decision
+equivalence, formal proofs of every port contract, mutation testing of every
+bench, and independent models for each engine. Its `make verify` also checks
+that the modules this tile shares with the chip are byte-identical, so the
+chip's verification of them covers this tile too.
 
 Apache 2.0. Fabricated through [Tiny Tapeout](https://tinytapeout.com) on the
 SkyWater sky130 process.
