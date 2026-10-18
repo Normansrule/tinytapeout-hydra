@@ -201,6 +201,45 @@ async def test_reg_torn_frames_change_nothing(dut):
 
 
 @cocotb.test()
+async def test_reg_abort_at_every_byte_boundary(dut):
+    """Second audit, R7 acceptance (2026-10-11): abort a frame at EVERY byte
+    boundary, not just one. A WD frame cut after 0..15 of its 16 data bytes
+    must leave WD_OK clear, even after a good descriptor, so GO is refused.
+    A PARAM frame cut after 0..5 of its 6 bytes must not move the decision
+    its row drives. The full frames still work afterwards."""
+    t = await start(dut)
+    for n in range(16):
+        await t.write(A_WD, SMALL)
+        await t.clear()
+        assert bit(await t.status(), ST_WD_OK)
+        await t.write(A_WD, LARGE >> (8 * (16 - n)), nbytes=n)
+        st = await t.status()
+        assert bit(st, ST_FRAME) and not bit(st, ST_WD_OK), \
+            f"WD cut after {n} bytes: status {st:#06x}"
+        await t.go()
+        st = await t.status()
+        assert bit(st, ST_GOERR) and not bit(st, ST_DISP), \
+            f"WD cut after {n} bytes was dispatched"
+    await t.clear()
+
+    slow_tpu = row(7, 4000, 5, 2, 0b000011, 0b000011000)
+    full = (ENG_TPU << 43) | slow_tpu
+    for n in range(6):
+        await t.write(A_PARAM, full >> (8 * (6 - n)), nbytes=n)
+        assert bit(await t.status(), ST_FRAME), f"PARAM cut after {n} bytes not flagged"
+        await t.clear()
+        st, r = await t.dispatch(LARGE)
+        assert bit(st, ST_DISP) and r["engine"] == ENG_TPU, \
+            f"PARAM cut after {n} bytes moved the decision to {ENG_NAME[r['engine']]}"
+        await t.comp(r["tag"])
+
+    # the complete frames, for contrast: the retune takes effect
+    await t.write(A_PARAM, full)
+    st, r = await t.dispatch(LARGE)
+    assert r["engine"] != ENG_TPU, "the complete PARAM frame did not take effect"
+
+
+@cocotb.test()
 async def test_reg_completion_calibration_and_fence(dut):
     """Completions free tags and feed the calibration counter; CAL_FREEZE stops
     it; the fence reports exactly the tag it points at."""
@@ -299,3 +338,55 @@ async def test_reg_margin_pins_are_log_scaled(dut):
         dut._log.info(f"margin {m} -> nibble {got}")
         assert got == exp, f"margin {m}: nibble {got}, expected {exp}"
         await t.comp(r["tag"])
+
+
+@cocotb.test()
+async def test_reg_wd_write_while_pending_is_refused(dut):
+    """Audit R7 (2026-10-11): a descriptor accepted by GO belongs to the
+    dispatcher until it is taken. WD bytes used to shift straight into the
+    register the pending request is presented from, so writing a new
+    descriptor while one was pending changed the request in flight -- the
+    dispatcher could take a different, or half-written, descriptor. A WD
+    write while a GO is pending must now be refused (FRAME_ERR) and change
+    nothing; the pending descriptor dispatches as it was."""
+    t = await start(dut)
+    await t.write(A_CTRL, 0x01)                       # HOLD: nothing dispatches
+    # Fill the pipeline until a GO stays pending.
+    for _ in range(8):
+        await t.write(A_WD, SMALL)
+        await t.go()
+        if bit(await t.status(), ST_PENDING):
+            break
+    st = await t.status()
+    assert bit(st, ST_PENDING), f"could not make a GO wait: {st:#06x}"
+    await t.clear()
+    await t.write(A_WD, LARGE)                        # while pending: must be refused
+    st = await t.status()
+    assert bit(st, ST_FRAME), f"a WD write while pending was accepted: {st:#06x}"
+    assert (await t.read(A_WD))[0] == SMALL, "the pending descriptor was overwritten"
+    await t.write(A_CTRL, 0x00)                       # release
+    for _ in range(40):
+        await ClockCycles(dut.clk, 20)
+        if not bit(await t.status(), ST_PENDING):
+            break
+    await ClockCycles(dut.clk, 40)
+    r = await t.result()
+    assert r["engine"] == ENG_SIMD, \
+        f"the pending SMALL descriptor dispatched as engine {ENG_NAME[r['engine']]}"
+
+
+@cocotb.test()
+async def test_reg_fence_on_a_tag_that_does_not_exist(dut):
+    """Audit R7: FENCE takes four bits but this tile has four tags. A fence on
+    tag 4..15 must read 'not busy', deterministically -- not an index past
+    the end of the busy vector -- whatever is in flight."""
+    t = await start(dut)
+    for _ in range(NTAG):                             # every real tag busy
+        await t.dispatch(SMALL)
+        await t.clear()
+    for tag in range(NTAG, 16):
+        await t.write(A_FENCE, tag)
+        st = await t.status()
+        assert not bit(st, ST_FENCE), f"fence on nonexistent tag {tag} reads busy: {st:#06x}"
+    await t.write(A_FENCE, 0)
+    assert bit(await t.status(), ST_FENCE), "fence on a busy real tag reads free"

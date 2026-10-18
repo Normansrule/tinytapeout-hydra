@@ -1,6 +1,7 @@
 # TinyTapeout project metadata for TT-A: the HYDRA-130 Mathematical Operation MUX.
 #
 # v3, THE RESEARCH TILE (2026-10-09): 3x4, down from 4x4.
+# v3.2 (2026-10-13): BACK TO 4x4 -- 3x4 did not route. See `tiles` below.
 #
 #     v2 (signed off 2026-10-05, 4x4)  147,278 um^2 by yosys + abc   67.3% by LibreLane
 #     v3 (this)                         113,939 um^2, 11,964 cells    ~70% expected at 3x4
@@ -105,7 +106,14 @@ project:
   # about thirteen cycles (three before the cost engine was shared) per descriptor either way; nothing about the design cares.
   clock_hz:     15151515
 
-  tiles: "3x4"          # v3: see the top of this file. v2 needed 4x4.
+  # v3.2 (2026-10-13): back to 4x4. The 3x4 harden of v3.1 did not route:
+  # detailed routing went 10085, 5223, 4558, 4338, 4190 violations over
+  # successive iterations (2026-10-13, read from the run's log): each
+  # iteration removed less than the last, and sign-off needs exactly 0. The cells fill about 70% of a 3x4 core, routed on met1-met4
+  # only, and GRT_ALLOW_CONGESTION lets global routing hand the overflow on to
+  # detailed routing, which cannot clear it. The same design at 4x4 signed
+  # off clean on 2026-10-10 at 52% of the core, 18/18 gate level.
+  tiles: "4x4"          # was "3x4" (v3, v3.1). See the top of this file.
 
   top_module:  "tt_um_hydra_mom"
 
@@ -124,7 +132,7 @@ pinout:
   ui[7]: "unused"
 
   uo[0]: "CIPO - SPI data out"
-  uo[1]: "irq - a sticky error flag is set"
+  uo[1]: "irq - any sticky flag, including dispatched; CLEAR_STICKY clears it"
   uo[2]: "engine[0] - engine of the last dispatch"
   uo[3]: "engine[1]"
   uo[4]: "engine[2]"

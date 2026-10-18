@@ -15,7 +15,7 @@ module hydra_rst_sync (
 	reg [STAGES - 1:0] sync_q;
 	always @(posedge clk or negedge arst_n)
 		if (!arst_n)
-			sync_q <= 1'sb0;
+			sync_q <= {STAGES {1'b0}};
 		else
 			sync_q <= {sync_q[STAGES - 2:0], 1'b1};
 	assign rst_n = (scan_mode ? scan_rst_n : sync_q[STAGES - 1]);
@@ -102,10 +102,11 @@ module mom_features (
 		endcase
 	end
 	wire signed [8:0] lg_i_c = $signed({1'b0, lg_w_c}) - $signed({1'b0, lg_q});
+	localparam [31:0] mom_pkg_WD_W = 128;
 	always @(posedge clk or negedge rst_n)
 		if (!rst_n) begin
 			out_valid <= 1'b0;
-			out_wd <= 1'sb0;
+			out_wd <= {mom_pkg_WD_W {1'b0}};
 			out_log2_w <= 8'd0;
 			out_log2_q <= 8'd0;
 			out_log2_i <= 9'sd0;
@@ -137,7 +138,6 @@ module mom_param_rom (
 	input wire wr_en;
 	input wire wr_priv;
 	input wire [2:0] wr_engine;
-	localparam [31:0] mom_pkg_EPARAM_W = 43;
 	input wire [42:0] wr_data;
 	localparam [31:0] mom_pkg_ENG_N = 5;
 	output wire [214:0] params;
@@ -147,10 +147,6 @@ module mom_param_rom (
 	localparam [42:0] DEF_NTT = 43'h28102044860;
 	localparam [42:0] DEF_CRYPTO = 43'h20082020980;
 	reg [42:0] row [0:4];
-	function automatic [2:0] sv2v_cast_3;
-		input reg [2:0] inp;
-		sv2v_cast_3 = inp;
-	endfunction
 	always @(posedge clk or negedge rst_n)
 		if (!rst_n) begin
 			row[3'd0] <= DEF_CPU;
@@ -159,7 +155,7 @@ module mom_param_rom (
 			row[3'd3] <= DEF_NTT;
 			row[3'd4] <= DEF_CRYPTO;
 		end
-		else if ((wr_en && wr_priv) && (wr_engine < sv2v_cast_3(mom_pkg_ENG_N)))
+		else if ((wr_en && wr_priv) && ({29'd0, wr_engine} < mom_pkg_ENG_N))
 			row[wr_engine] <= wr_data;
 	genvar _gv_e_1;
 	function automatic [42:0] sv2v_cast_43;
@@ -225,13 +221,13 @@ module mom_cost_engine (
 	function automatic mom_pkg_dtype_ok;
 		input reg [5:0] mask;
 		input reg [2:0] dt;
-		mom_pkg_dtype_ok = (mask >> dt) & 1'b1;
+		mom_pkg_dtype_ok = |(mask & (6'd1 << dt));
 	endfunction
 	wire dt_supported = mom_pkg_dtype_ok(param[14-:6], dtype);
 	function automatic mom_pkg_opc_ok;
 		input reg [8:0] mask;
 		input reg [3:0] oc;
-		mom_pkg_opc_ok = (mask >> oc) & 1'b1;
+		mom_pkg_opc_ok = |(mask & (9'd1 << oc));
 	endfunction
 	wire opc_supported = mom_pkg_opc_ok(param[8-:9], op_class);
 	wire capable_a = dt_supported && opc_supported;
@@ -239,13 +235,11 @@ module mom_cost_engine (
 	wire signed [9:0] bw_bound_s = log2_i + $signed({6'd0, param[26-:4]});
 	wire [3:0] bw_bound = (bw_bound_s <= 0 ? 4'd0 : (bw_bound_s >= 15 ? 4'd15 : bw_bound_s[3:0]));
 	wire [3:0] lg_p_att = (bw_bound < param[42-:4] ? bw_bound : param[42-:4]);
-	wire [3:0] dbg_lg_p_att = lg_p_att;
 	wire [7:0] lg_t_comp = (log2_w > {4'd0, lg_p_att} ? log2_w - {4'd0, lg_p_att} : 8'd0);
 	wire [4:0] sh_amt = (lg_t_comp > 8'd31 ? 5'd31 : lg_t_comp[4:0]);
 	localparam [31:0] mom_pkg_COST_SAT = 32'hffff0000;
 	wire [31:0] t_compute = (lg_t_comp > 8'd31 ? mom_pkg_COST_SAT : 32'd1 << sh_amt);
 	wire [31:0] t_move = {8'd0, bytes_q} >> bw_dma_log2;
-	wire [31:0] t_setup = {20'd0, param[38-:12]};
 	wire [1:0] setup_sh = (lat_hint == 2'd3 ? 2'd2 : (lat_hint == 2'd2 ? 2'd1 : 2'd0));
 	wire [39:0] t_setup_w = {28'd0, param[38-:12]} << setup_sh;
 	wire [39:0] t_sum_w = (({8'd0, t_compute} + t_setup_w) + {8'd0, t_move}) + {32'd0, queue_depth};
@@ -255,14 +249,14 @@ module mom_cost_engine (
 	reg [31:0] e_mem_q;
 	reg valid_q;
 	reg capable_q;
-	reg [3:0] lambda_q;
+	reg lambda_en_q;
 	reg [4:0] tp_e;
 	always @(*) begin
 		if (_sv2v_0)
 			;
-		if (t_pred_q[31:16] != 16'd0)
+		if (t_pred_q[31:24] != 8'd0)
 			tp_e = 5'd16;
-		else if (t_pred_q[15:8] != 8'd0)
+		else if (t_pred_q[23:16] != 8'd0)
 			tp_e = 5'd8;
 		else
 			tp_e = 5'd0;
@@ -270,13 +264,10 @@ module mom_cost_engine (
 	wire [15:0] tp_m = (tp_e == 5'd16 ? t_pred_q[31:16] : (tp_e == 5'd8 ? t_pred_q[23:8] : t_pred_q[15:0]));
 	wire [23:0] cal_prod = tp_m * {8'd0, k_cal};
 	localparam [31:0] mom_pkg_KCAL_SHIFT = 6;
-	function automatic [6:0] sv2v_cast_7;
-		input reg [6:0] inp;
-		sv2v_cast_7 = inp;
-	endfunction
-	wire signed [6:0] cal_sh = $signed({2'b00, tp_e}) - $signed(sv2v_cast_7(mom_pkg_KCAL_SHIFT));
+	wire signed [31:0] cal_sh32 = $signed({27'd0, tp_e}) - $signed(mom_pkg_KCAL_SHIFT);
+	wire signed [6:0] cal_sh = cal_sh32[6:0];
 	wire [47:0] cal_wide = (cal_sh >= 0 ? {24'd0, cal_prod} << cal_sh[5:0] : {24'd0, cal_prod} >> -cal_sh[5:0]);
-	wire [31:0] t_cal = (cal_wide[47:mom_pkg_COST_W] != {16 {1'sb0}} ? mom_pkg_COST_SAT : cal_wide[31:0]);
+	wire [31:0] t_cal = (cal_wide[47:mom_pkg_COST_W] != 16'd0 ? mom_pkg_COST_SAT : cal_wide[31:0]);
 	wire [5:0] w_sh = (log2_w > 8'd31 ? 6'd31 : {1'b0, log2_w[4:0]});
 	wire signed [7:0] net_sh_s = ($signed({2'b00, w_sh}) + $signed({5'b00000, lambda_sh[2:0]})) - $signed({4'b0000, e_shift});
 	wire net_pos = ~net_sh_s[7];
@@ -290,12 +281,12 @@ module mom_cost_engine (
 	wire [31:0] e_mem_sc = (mem_pos ? {4'd0, e_mem_raw} << mem_mag : {4'd0, e_mem_raw} >> mem_mag);
 	always @(posedge clk or negedge rst_n)
 		if (!rst_n) begin
-			t_pred_q <= 1'sb0;
-			e_ops_q <= 1'sb0;
-			e_mem_q <= 1'sb0;
+			t_pred_q <= {mom_pkg_COST_W {1'b0}};
+			e_ops_q <= 32'd0;
+			e_mem_q <= 32'd0;
 			valid_q <= 1'b0;
 			capable_q <= 1'b0;
-			lambda_q <= 1'sb0;
+			lambda_en_q <= 1'b0;
 		end
 		else if (adv) begin
 			t_pred_q <= t_pred_a;
@@ -303,12 +294,12 @@ module mom_cost_engine (
 			e_mem_q <= e_mem_sc;
 			valid_q <= valid_a;
 			capable_q <= capable_a;
-			lambda_q <= lambda_sh;
+			lambda_en_q <= lambda_sh[3];
 		end
 	assign t_pred = t_pred_q;
 	assign valid = valid_q;
 	assign capable = capable_q;
-	wire [32:0] e_sum_w = (lambda_q[3] ? {1'b0, e_ops_q} + {1'b0, e_mem_q} : 33'd0);
+	wire [32:0] e_sum_w = (lambda_en_q ? {1'b0, e_ops_q} + {1'b0, e_mem_q} : 33'd0);
 	wire [31:0] e_scaled = (e_sum_w[32] ? mom_pkg_COST_SAT : e_sum_w[31:0]);
 	wire [mom_pkg_COST_W:0] j_sum = {1'b0, t_cal} + {1'b0, e_scaled};
 	always @(*) begin
@@ -321,6 +312,7 @@ module mom_cost_engine (
 		else
 			cost = j_sum[31:0];
 	end
+	wire _unused_ok = &{1'b0, net_sh_s[6], mem_sh_s[6], cal_sh32[31:7], ENGINE_ID};
 	initial _sv2v_0 = 0;
 endmodule
 `default_nettype wire
@@ -340,7 +332,8 @@ module mom_calibrate (
 	upd_count,
 	last_dir
 );
-	parameter [31:0] ALPHA = 4;
+	localparam [31:0] mom_pkg_KCAL_ALPHA = 4;
+	parameter [31:0] ALPHA = mom_pkg_KCAL_ALPHA;
 	parameter [7:0] K_MIN = 8'd4;
 	parameter [7:0] K_MAX = 8'd255;
 	input wire clk;
@@ -362,26 +355,19 @@ module mom_calibrate (
 	reg [7:0] k [0:4][0:8];
 	genvar _gv_e_2;
 	localparam [7:0] mom_pkg_KCAL_UNITY = 8'd64;
-	function automatic [3:0] sv2v_cast_4;
-		input reg [3:0] inp;
-		sv2v_cast_4 = inp;
-	endfunction
 	generate
 		for (_gv_e_2 = 0; _gv_e_2 < mom_pkg_ENG_N; _gv_e_2 = _gv_e_2 + 1) begin : g_rd
 			localparam e = _gv_e_2;
-			assign rd_k[e * 8+:8] = (rd_opclass < sv2v_cast_4(NOPC) ? k[e][rd_opclass] : mom_pkg_KCAL_UNITY);
+			assign rd_k[e * 8+:8] = ({28'd0, rd_opclass} < NOPC ? k[e][rd_opclass] : mom_pkg_KCAL_UNITY);
 		end
 	endgenerate
-	function automatic [2:0] sv2v_cast_3;
-		input reg [2:0] inp;
-		sv2v_cast_3 = inp;
-	endfunction
-	wire [7:0] k_cur = ((upd_engine < sv2v_cast_3(mom_pkg_ENG_N)) && (upd_opclass < sv2v_cast_4(NOPC)) ? k[upd_engine][upd_opclass] : mom_pkg_KCAL_UNITY);
+	wire upd_idx_ok = ({29'd0, upd_engine} < mom_pkg_ENG_N) && ({28'd0, upd_opclass} < NOPC);
+	wire [7:0] k_cur = (upd_idx_ok ? k[upd_engine][upd_opclass] : mom_pkg_KCAL_UNITY);
 	wire [39:0] t_cal_wide = upd_t_predicted * {32'd0, k_cur};
 	localparam [31:0] mom_pkg_KCAL_SHIFT = 6;
-	wire [31:0] t_cal = t_cal_wide[(mom_pkg_COST_W + mom_pkg_KCAL_SHIFT) - 1-:mom_pkg_COST_W];
-	wire too_slow = upd_t_measured > t_cal;
-	wire too_fast = upd_t_measured < t_cal;
+	wire [33:0] t_cal = t_cal_wide[39:mom_pkg_KCAL_SHIFT];
+	wire too_slow = {2'b00, upd_t_measured} > t_cal;
+	wire too_fast = {2'b00, upd_t_measured} < t_cal;
 	function automatic [7:0] step_of;
 		input reg [7:0] kc;
 		reg [7:0] raw;
@@ -406,11 +392,10 @@ module mom_calibrate (
 			k_dn_of = (w[8] || (w[7:0] < K_MIN) ? K_MIN : w[7:0]);
 		end
 	endfunction
-	wire [7:0] step = step_of(k_cur);
 	wire [7:0] k_up = k_up_of(k_cur);
 	wire [7:0] k_dn = k_dn_of(k_cur);
 	wire [7:0] k_next = (too_slow ? k_up : (too_fast ? k_dn : k_cur));
-	wire do_update = (upd_valid && !freeze) && (upd_t_predicted != {32 {1'sb0}});
+	wire do_update = ((upd_valid && !freeze) && (upd_t_predicted != {mom_pkg_COST_W {1'b0}})) && upd_idx_ok;
 	always @(posedge clk or negedge rst_n)
 		if (!rst_n) begin
 			begin : sv2v_autoblock_1
@@ -442,6 +427,7 @@ module mom_calibrate (
 			upd_count <= upd_count + 16'd1;
 			last_dir <= too_slow;
 		end
+	wire _unused_ok = &{1'b0, t_cal_wide[5:0]};
 endmodule
 `default_nettype wire
 `default_nettype none
@@ -467,7 +453,6 @@ module mom_select (
 	output reg any_valid;
 	output reg any_capable;
 	output reg [31:0] sel_margin;
-	localparam [31:0] PW = 36;
 	wire [35:0] lane [0:4];
 	genvar _gv_e_3;
 	function automatic signed [2:0] sv2v_cast_3_signed;
@@ -514,8 +499,9 @@ module mom_select (
 		any_capable = |capable;
 		sel_engine = best[2:0];
 		sel_cost = best[34:3];
-		sel_margin = (snd[35] || !any_valid ? {32 {1'sb0}} : (snd[34:3] >= best[34:3] ? snd[34:3] - best[34:3] : {32 {1'sb0}}));
+		sel_margin = (snd[35] || !any_valid ? {mom_pkg_COST_W {1'b0}} : (snd[34:3] >= best[34:3] ? snd[34:3] - best[34:3] : {mom_pkg_COST_W {1'b0}}));
 	end
+	wire _unused_ok = &{1'b0, best[35], snd[2:0]};
 	initial _sv2v_0 = 0;
 endmodule
 `default_nettype wire
@@ -572,7 +558,7 @@ module mom_scoreboard (
 	reg [31:0] now;
 	always @(posedge clk or negedge rst_n)
 		if (!rst_n)
-			now <= 1'sb0;
+			now <= {mom_pkg_COST_W {1'b0}};
 		else
 			now <= now + 32'd1;
 	reg busy [0:NTAG - 1];
@@ -587,38 +573,36 @@ module mom_scoreboard (
 			assign tag_busy_vec[t] = busy[t];
 		end
 	endgenerate
+	localparam [31:0] TIW = (NTAG > 1 ? $clog2(NTAG) : 1);
 	reg [3:0] free_tag;
+	reg [TIW - 1:0] free_i;
 	reg have_free;
-	function automatic signed [3:0] sv2v_cast_4_signed;
-		input reg signed [3:0] inp;
-		sv2v_cast_4_signed = inp;
-	endfunction
 	always @(*) begin
 		if (_sv2v_0)
 			;
+		free_i = {TIW {1'b0}};
 		free_tag = 4'd0;
 		have_free = 1'b0;
 		begin : sv2v_autoblock_1
 			reg signed [31:0] t;
 			for (t = NTAG - 1; t >= 0; t = t - 1)
 				if (!busy[t]) begin
-					free_tag = sv2v_cast_4_signed(t);
+					free_i = t[TIW - 1:0];
+					free_tag = t[3:0];
 					have_free = 1'b1;
 				end
 		end
 	end
-	function automatic [2:0] sv2v_cast_3;
-		input reg [2:0] inp;
-		sv2v_cast_3 = inp;
-	endfunction
-	wire disp_engine_ok = disp_engine < sv2v_cast_3(mom_pkg_ENG_N);
+	wire disp_engine_ok = {29'd0, disp_engine} < mom_pkg_ENG_N;
 	wire comp_tag_ok = {28'd0, comp_tag} < NTAG;
+	wire [TIW - 1:0] comp_i = comp_tag[TIW - 1:0];
+	wire [TIW - 1:0] fence_i = fence_tag[TIW - 1:0];
 	wire engine_has_room = disp_engine_ok && !engine_full[disp_engine];
 	assign disp_ready = have_free && engine_has_room;
 	assign disp_tag = free_tag;
 	wire do_disp = disp_valid && disp_ready;
-	wire do_comp = (comp_valid && comp_tag_ok) && busy[comp_tag];
-	wire stale_comp = comp_valid && (!comp_tag_ok || !busy[comp_tag]);
+	wire do_comp = (comp_valid && comp_tag_ok) && busy[comp_i];
+	wire stale_comp = comp_valid && (!comp_tag_ok || !busy[comp_i]);
 	always @(posedge clk or negedge rst_n)
 		if (!rst_n)
 			err_stale_comp <= 1'b0;
@@ -629,15 +613,11 @@ module mom_scoreboard (
 		input reg signed [2:0] inp;
 		sv2v_cast_3_signed = inp;
 	endfunction
-	function automatic [7:0] sv2v_cast_8;
-		input reg [7:0] inp;
-		sv2v_cast_8 = inp;
-	endfunction
 	generate
 		for (_gv_e_5 = 0; _gv_e_5 < mom_pkg_ENG_N; _gv_e_5 = _gv_e_5 + 1) begin : g_queue
 			localparam e = _gv_e_5;
 			wire inc = do_disp && (disp_engine == sv2v_cast_3_signed(e));
-			wire dec = do_comp && (t_eng[comp_tag] == sv2v_cast_3_signed(e));
+			wire dec = do_comp && (t_eng[comp_i] == sv2v_cast_3_signed(e));
 			always @(posedge clk or negedge rst_n)
 				if (!rst_n)
 					queue_depth[e * 8+:8] <= 8'd0;
@@ -645,7 +625,7 @@ module mom_scoreboard (
 					queue_depth[e * 8+:8] <= queue_depth[e * 8+:8] + 8'd1;
 				else if ((dec && !inc) && (queue_depth[e * 8+:8] != 8'd0))
 					queue_depth[e * 8+:8] <= queue_depth[e * 8+:8] - 8'd1;
-			assign engine_full[e] = queue_depth[e * 8+:8] >= sv2v_cast_8(QMAX);
+			assign engine_full[e] = {24'd0, queue_depth[e * 8+:8]} >= QMAX;
 		end
 	endgenerate
 	always @(posedge clk or negedge rst_n)
@@ -656,32 +636,32 @@ module mom_scoreboard (
 					busy[t] <= 1'b0;
 					t_eng[t] <= 3'd0;
 					t_opc[t] <= 4'd0;
-					t_start[t] <= 1'sb0;
-					t_pred[t] <= 1'sb0;
+					t_start[t] <= {mom_pkg_COST_W {1'b0}};
+					t_pred[t] <= {mom_pkg_COST_W {1'b0}};
 				end
 		end
 		else begin
 			if (do_disp) begin
-				busy[free_tag] <= 1'b1;
-				t_eng[free_tag] <= disp_engine;
-				t_opc[free_tag] <= disp_opclass;
-				t_start[free_tag] <= now;
-				t_pred[free_tag] <= disp_t_pred;
+				busy[free_i] <= 1'b1;
+				t_eng[free_i] <= disp_engine;
+				t_opc[free_i] <= disp_opclass;
+				t_start[free_i] <= now;
+				t_pred[free_i] <= disp_t_pred;
 			end
 			if (do_comp)
-				busy[comp_tag] <= 1'b0;
+				busy[comp_i] <= 1'b0;
 		end
 	always @(posedge clk or negedge rst_n)
 		if (!rst_n)
 			cal_valid <= 1'b0;
 		else begin
 			cal_valid <= do_comp;
-			cal_engine <= t_eng[comp_tag];
-			cal_opclass <= t_opc[comp_tag];
-			cal_t_measured <= now - t_start[comp_tag];
-			cal_t_predicted <= t_pred[comp_tag];
+			cal_engine <= t_eng[comp_i];
+			cal_opclass <= t_opc[comp_i];
+			cal_t_measured <= now - t_start[comp_i];
+			cal_t_predicted <= t_pred[comp_i];
 		end
-	assign fence_busy = busy[fence_tag];
+	assign fence_busy = ({28'd0, fence_tag} < NTAG ? busy[fence_i] : 1'b0);
 	initial _sv2v_0 = 0;
 endmodule
 `default_nettype wire
@@ -737,7 +717,6 @@ module mom_top (
 	input wire csr_wr;
 	input wire csr_priv;
 	input wire [2:0] csr_engine;
-	localparam [31:0] mom_pkg_EPARAM_W = 43;
 	input wire [42:0] csr_data;
 	input wire [3:0] csr_bw_dma_log2;
 	input wire [3:0] csr_eps_mem;
@@ -789,6 +768,7 @@ module mom_top (
 	wire [31:0] cal_t_meas;
 	wire [31:0] cal_t_pred;
 	wire [39:0] k_cal;
+	wire cal_last_dir;
 	mom_calibrate u_cal(
 		.clk(clk),
 		.rst_n(rst_n),
@@ -802,7 +782,7 @@ module mom_top (
 		.upd_t_measured(cal_t_meas),
 		.upd_t_predicted(cal_t_pred),
 		.upd_count(obs_cal_updates),
-		.last_dir()
+		.last_dir(cal_last_dir)
 	);
 	wire [(mom_pkg_ENG_N * mom_pkg_COST_W) - 1:0] cost;
 	wire [(mom_pkg_ENG_N * mom_pkg_COST_W) - 1:0] t_pred;
@@ -870,15 +850,15 @@ module mom_top (
 			always @(*) eval_busy = sv2v_tmp_74BE0;
 			assign lane_we = 1'b0;
 			assign lane_idx = 3'd0;
-			assign lane_cost = 1'sb0;
-			assign lane_tpred = 1'sb0;
+			assign lane_cost = {mom_pkg_COST_W {1'b0}};
+			assign lane_tpred = {mom_pkg_COST_W {1'b0}};
 			assign lane_valid = 1'b0;
 			assign lane_capable = 1'b0;
 		end
 		else begin : g_shared
 			reg [2:0] idx;
 			reg phase;
-			wire last = (idx == sv2v_cast_3(4)) && phase;
+			wire last = ({29'd0, idx} == 4) && phase;
 			always @(posedge clk or negedge rst_n)
 				if (!rst_n) begin
 					idx <= 3'd0;
@@ -937,10 +917,10 @@ module mom_top (
 			assign lane_tpred = s_tpred;
 			assign lane_valid = s_valid;
 			assign lane_capable = s_capable;
-			assign cost = 1'sb0;
-			assign t_pred = 1'sb0;
-			assign cvalid = 1'sb0;
-			assign ccapable = 1'sb0;
+			assign cost = {mom_pkg_ENG_N * mom_pkg_COST_W {1'b0}};
+			assign t_pred = {mom_pkg_ENG_N * mom_pkg_COST_W {1'b0}};
+			assign cvalid = {mom_pkg_ENG_N {1'b0}};
+			assign ccapable = {mom_pkg_ENG_N {1'b0}};
 		end
 	endgenerate
 	reg [(mom_pkg_ENG_N * mom_pkg_COST_W) - 1:0] cost_q;
@@ -951,10 +931,11 @@ module mom_top (
 	reg [127:0] a_wd;
 	wire a_load = (COST_SHARED ? 1'b0 : a_adv && f_valid);
 	wire a_clear = (COST_SHARED ? 1'b0 : a_adv && !f_valid);
+	localparam [31:0] mom_pkg_WD_W = 128;
 	always @(posedge clk or negedge rst_n)
 		if (!rst_n) begin
 			a_valid <= 1'b0;
-			a_wd <= 1'sb0;
+			a_wd <= {mom_pkg_WD_W {1'b0}};
 		end
 		else if (a_load) begin
 			a_valid <= 1'b1;
@@ -965,11 +946,11 @@ module mom_top (
 	always @(posedge clk or negedge rst_n)
 		if (!rst_n) begin
 			c_valid <= 1'b0;
-			cost_q <= 1'sb0;
-			t_pred_q <= 1'sb0;
-			cvalid_q <= 1'sb0;
-			ccapable_q <= 1'sb0;
-			c_wd <= 1'sb0;
+			cost_q <= {mom_pkg_ENG_N * mom_pkg_COST_W {1'b0}};
+			t_pred_q <= {mom_pkg_ENG_N * mom_pkg_COST_W {1'b0}};
+			cvalid_q <= {mom_pkg_ENG_N {1'b0}};
+			ccapable_q <= {mom_pkg_ENG_N {1'b0}};
+			c_wd <= {mom_pkg_WD_W {1'b0}};
 		end
 		else if (COST_SHARED) begin
 			if (lane_we) begin
@@ -1052,6 +1033,7 @@ module mom_top (
 	assign disp_wd = c_wd;
 	assign c_ready = (disp_valid && disp_accept) || unsupported;
 	assign f_ready = (COST_SHARED ? eval_done : a_adv);
+	wire _unused_ok = &{1'b0, f_lg_q, sel_cost, cal_last_dir};
 endmodule
 `default_nettype wire
 `default_nettype none
@@ -1179,6 +1161,7 @@ module hydra_tt_regs (
 	wd,
 	disp_valid,
 	disp_accept,
+	disp_fire,
 	disp_engine,
 	disp_tag,
 	comp_valid,
@@ -1223,6 +1206,7 @@ module hydra_tt_regs (
 	output wire [127:0] wd;
 	input wire disp_valid;
 	output wire disp_accept;
+	input wire disp_fire;
 	input wire [2:0] disp_engine;
 	input wire [3:0] disp_tag;
 	output reg comp_valid;
@@ -1264,6 +1248,7 @@ module hydra_tt_regs (
 	localparam [6:0] A_PARAM = 7'h0b;
 	localparam [6:0] A_GLOBAL = 7'h0c;
 	localparam [6:0] A_INFO = 7'h0d;
+	localparam [7:0] NTAG8 = NTAG[7:0];
 	localparam [31:0] ID_VALUE = 32'h48594d33;
 	function automatic [4:0] reg_len;
 		input reg [6:0] a;
@@ -1302,6 +1287,7 @@ module hydra_tt_regs (
 	reg [3:0] fence_q;
 	reg [11:0] global_q;
 	reg pending_q;
+	reg wd_block_q;
 	reg s_disp;
 	reg s_unsupp;
 	reg s_stale;
@@ -1311,9 +1297,9 @@ module hydra_tt_regs (
 	reg [3:0] r_tag;
 	reg [31:0] r_margin;
 	reg [7:0] r_errtag;
-	wire dispatched = disp_valid & disp_accept;
-	wire frame_ok = ((have_cmd && !cmd_rd) && writable(cmd_addr)) && (n_data == reg_len(cmd_addr));
-	wire frame_bad = (have_cmd && !cmd_rd) && !frame_ok;
+	wire dispatched = disp_fire;
+	wire frame_ok = (((have_cmd && !cmd_rd) && writable(cmd_addr)) && (n_data == reg_len(cmd_addr))) && !wd_block_q;
+	wire frame_bad = ((have_cmd && !cmd_rd) && !frame_ok) || wd_block_q;
 	wire commit = cs_end && frame_ok;
 	wire [7:0] w8 = wbuf[7:0];
 	wire do_go = (commit && (cmd_addr == A_ACTION)) && w8[0];
@@ -1326,7 +1312,7 @@ module hydra_tt_regs (
 			cmd_addr <= 7'd0;
 			n_data <= 5'd0;
 			wbuf <= 48'd0;
-			wd_q <= 1'sb0;
+			wd_q <= {mom_pkg_WD_W {1'b0}};
 			wd_ok <= 1'b0;
 			hold_q <= 1'b0;
 			cal_freeze_q <= 1'b0;
@@ -1335,11 +1321,12 @@ module hydra_tt_regs (
 			fence_q <= 4'd0;
 			global_q <= 12'h4c8;
 			pending_q <= 1'b0;
+			wd_block_q <= 1'b0;
 			comp_valid <= 1'b0;
 			comp_tag <= 4'd0;
 			csr_wr <= 1'b0;
 			csr_engine <= 3'd0;
-			csr_data <= 1'sb0;
+			csr_data <= {mom_pkg_EPARAM_W {1'b0}};
 			s_disp <= 1'b0;
 			s_unsupp <= 1'b0;
 			s_stale <= 1'b0;
@@ -1347,7 +1334,7 @@ module hydra_tt_regs (
 			s_goerr <= 1'b0;
 			r_engine <= 3'd0;
 			r_tag <= 4'd0;
-			r_margin <= 1'sb0;
+			r_margin <= {mom_pkg_COST_W {1'b0}};
 			r_errtag <= 8'd0;
 		end
 		else begin
@@ -1356,21 +1343,28 @@ module hydra_tt_regs (
 			if (cs_start) begin
 				have_cmd <= 1'b0;
 				n_data <= 5'd0;
+				wd_block_q <= 1'b0;
 			end
 			if (rx_valid) begin
 				if (rx_index == 5'd0) begin
 					have_cmd <= 1'b1;
 					cmd_rd <= rx_byte[7];
 					cmd_addr <= rx_byte[6:0];
-					if (!rx_byte[7] && (rx_byte[6:0] == A_WD))
-						wd_ok <= 1'b0;
+					if (!rx_byte[7] && (rx_byte[6:0] == A_WD)) begin
+						if (pending_q)
+							wd_block_q <= 1'b1;
+						else
+							wd_ok <= 1'b0;
+					end
 				end
 				else if (have_cmd) begin
 					if (n_data != 5'd31)
 						n_data <= n_data + 5'd1;
 					if (!cmd_rd) begin
-						if (cmd_addr == A_WD)
-							wd_q <= {wd_q[119:0], rx_byte};
+						if (cmd_addr == A_WD) begin
+							if (!wd_block_q)
+								wd_q <= {wd_q[119:0], rx_byte};
+						end
 						else
 							wbuf <= {wbuf[39:0], rx_byte};
 					end
@@ -1378,6 +1372,7 @@ module hydra_tt_regs (
 			end
 			if (cs_end) begin
 				have_cmd <= 1'b0;
+				wd_block_q <= 1'b0;
 				if (frame_bad)
 					s_frame <= 1'b1;
 			end
@@ -1454,59 +1449,50 @@ module hydra_tt_regs (
 		busy16[NTAG - 1:0] = obs_tag_busy;
 	end
 	reg [127:0] rval;
-	function automatic [127:0] sv2v_cast_D3020;
-		input reg [127:0] inp;
-		sv2v_cast_D3020 = inp;
-	endfunction
-	function automatic [7:0] sv2v_cast_8;
-		input reg [7:0] inp;
-		sv2v_cast_8 = inp;
-	endfunction
 	always @(*) begin
 		if (_sv2v_0)
 			;
 		case (cmd_addr)
-			A_ID: rval = sv2v_cast_D3020(ID_VALUE);
+			A_ID: rval = {{96 {1'b0}}, ID_VALUE};
 			A_WD: rval = wd_q;
-			A_CTRL: rval = sv2v_cast_D3020({param_lock_q, cal_reset_q, cal_freeze_q, hold_q});
-			A_STATUS: rval = sv2v_cast_D3020(status_w);
-			A_RESULT: rval = sv2v_cast_D3020({r_engine, r_tag, 1'b0, r_margin, r_errtag});
-			A_CALUPD: rval = sv2v_cast_D3020(obs_cal_updates);
-			A_BUSY: rval = sv2v_cast_D3020(busy16);
-			A_FENCE: rval = sv2v_cast_D3020(fence_q);
-			A_GLOBAL: rval = sv2v_cast_D3020(global_q);
-			A_INFO: rval = sv2v_cast_D3020(sv2v_cast_8(NTAG));
-			default: rval = 1'sb0;
+			A_CTRL: rval = {{124 {1'b0}}, param_lock_q, cal_reset_q, cal_freeze_q, hold_q};
+			A_STATUS: rval = {{112 {1'b0}}, status_w};
+			A_RESULT: rval = {{80 {1'b0}}, r_engine, r_tag, 1'b0, r_margin, r_errtag};
+			A_CALUPD: rval = {{112 {1'b0}}, obs_cal_updates};
+			A_BUSY: rval = {{112 {1'b0}}, busy16};
+			A_FENCE: rval = {{124 {1'b0}}, fence_q};
+			A_GLOBAL: rval = {{116 {1'b0}}, global_q};
+			A_INFO: rval = {{120 {1'b0}}, NTAG8};
+			default: rval = {mom_pkg_WD_W {1'b0}};
 		endcase
 	end
 	wire [4:0] len = reg_len(cmd_addr);
 	wire [4:0] k = n_data;
-	function automatic [6:0] sv2v_cast_7;
-		input reg [6:0] inp;
-		sv2v_cast_7 = inp;
-	endfunction
-	wire [6:0] sh = sv2v_cast_7((len - 5'd1) - k) * 7'd8;
+	wire [4:0] kofs = (len - 5'd1) - k;
+	wire [6:0] sh = {kofs[3:0], 3'b000};
 	wire in_rng = (have_cmd && cmd_rd) && (k < len);
+	reg [39:0] snap_q;
+	wire snap_use = (k != 5'd0) && (len <= 5'd6);
+	always @(posedge clk or negedge rst_n)
+		if (!rst_n)
+			snap_q <= 40'd0;
+		else if ((tx_load && in_rng) && (k == 5'd0))
+			snap_q <= rval[39:0];
 	always @(*) begin
 		if (_sv2v_0)
 			;
 		if (!have_cmd)
 			tx_byte = status_w[15:8];
 		else if (in_rng)
-			tx_byte = rval[sh+:8];
+			tx_byte = (snap_use ? snap_q[sh[5:0]+:8] : rval[sh+:8]);
 		else
 			tx_byte = 8'h00;
 	end
-	wire _unused = &{tx_load, 1'b0};
 	assign irq = (((s_disp | s_unsupp) | s_stale) | s_frame) | s_goerr;
 	assign last_engine = r_engine;
 	assign disp_sticky = s_disp;
 	assign last_tag = r_tag;
 	reg [3:0] mlog;
-	function automatic signed [3:0] sv2v_cast_4_signed;
-		input reg signed [3:0] inp;
-		sv2v_cast_4_signed = inp;
-	endfunction
 	always @(*) begin
 		if (_sv2v_0)
 			;
@@ -1515,10 +1501,11 @@ module hydra_tt_regs (
 			reg signed [31:0] b;
 			for (b = 0; b < mom_pkg_COST_W; b = b + 1)
 				if (r_margin[b])
-					mlog = (b >= 14 ? 4'd15 : sv2v_cast_4_signed(b + 1));
+					mlog = (b >= 14 ? 4'd15 : b[3:0] + 4'd1);
 		end
 	end
 	assign margin_nib = mlog;
+	wire _unused_ok = &{1'b0, disp_valid, wbuf[47:46], w8[7:4], kofs[4]};
 	initial _sv2v_0 = 0;
 endmodule
 `default_nettype wire
@@ -1585,7 +1572,6 @@ module tt_um_hydra_mom (
 	wire r_cal_reset;
 	wire r_irq;
 	wire r_disp_sticky;
-	localparam [31:0] mom_pkg_WD_W = 128;
 	wire [127:0] r_wd;
 	wire [3:0] r_comp_tag;
 	wire [3:0] r_fence_tag;
@@ -1596,7 +1582,6 @@ module tt_um_hydra_mom (
 	wire [3:0] r_margin_nib;
 	wire [2:0] r_csr_engine;
 	wire [2:0] r_last_engine;
-	localparam [31:0] mom_pkg_EPARAM_W = 43;
 	wire [42:0] r_csr_data;
 	wire disp_valid;
 	wire [2:0] disp_engine;
@@ -1605,7 +1590,6 @@ module tt_um_hydra_mom (
 	wire err_unsupported;
 	wire [7:0] err_tag;
 	wire err_stale_comp;
-	localparam [31:0] mom_pkg_COST_W = 32;
 	wire [31:0] obs_margin;
 	wire [3:0] obs_tag_busy;
 	wire [15:0] obs_cal_updates;
@@ -1626,6 +1610,7 @@ module tt_um_hydra_mom (
 		.wd(r_wd),
 		.disp_valid(disp_valid),
 		.disp_accept(r_disp_accept),
+		.disp_fire(disp_valid & r_disp_accept),
 		.disp_engine(disp_engine),
 		.disp_tag(disp_tag),
 		.comp_valid(r_comp_valid),

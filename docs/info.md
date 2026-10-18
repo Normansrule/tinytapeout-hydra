@@ -149,9 +149,10 @@ peripheral at 1 MHz, a few milliseconds bit-banged.
 The last signed-off harden is v2 (2026-10-05, 4x4): every corner met setup at
 66 ns, slow-corner slack +2.199 ns, DRC, LVS and antenna clean, 17 of 17
 tests on the hardened netlist. v3 is the same logic minus the parts listed at
-the top of `info.yaml`, on 3x4 tiles; its harden is pending.
+the top of `info.yaml`, on 4x4 tiles (3x4 was tried for v3.1 and did not
+route); its harden is pending.
 
-| | v2 (4x4) | v3 (3x4) |
+| | v2 (4x4) | v3 (4x4) |
 |---|---:|---:|
 | cells, yosys + abc on sky130 | 15,574 | 11,964 |
 | cell area, um^2 | 147,278 | 113,939 |

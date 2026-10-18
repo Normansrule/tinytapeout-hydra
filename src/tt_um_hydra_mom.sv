@@ -70,7 +70,9 @@
  *                          v3 ignores it, so a v2 host still works)
  *
  * uo_out[0]    CIPO
- * uo_out[1]    IRQ         a sticky error flag is set
+ * uo_out[1]    IRQ         any sticky STATUS flag: dispatched, unsupported,
+ *                          stale, frame or GO error (audit R7: this includes
+ *                          a successful dispatch). CLEAR_STICKY clears it.
  * uo_out[4:2]  engine      engine of the last dispatch
  * uo_out[5]    dispatched  sticky until CLEAR_STICKY
  * uo_out[6]    any_busy    at least one tag outstanding
@@ -189,6 +191,7 @@ module tt_um_hydra_mom
     .rx_byte(rx_byte), .rx_index(rx_index), .tx_load(tx_load), .tx_byte(tx_byte),
     .wd_valid(r_wd_valid), .wd_ready(wd_ready), .wd(r_wd),
     .disp_valid(disp_valid), .disp_accept(r_disp_accept),
+    .disp_fire(disp_valid & r_disp_accept),       // here HOLD is the whole handshake
     .disp_engine(disp_engine), .disp_tag(disp_tag),
     .comp_valid(r_comp_valid), .comp_tag(r_comp_tag),
     .fence_tag(r_fence_tag), .fence_busy(fence_busy),
