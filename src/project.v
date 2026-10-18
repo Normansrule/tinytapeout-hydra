@@ -133,20 +133,26 @@ module mom_param_rom (
 	wr_data,
 	params
 );
+	localparam [31:0] mom_pkg_ENG_N = 5;
+	parameter [31:0] NENG = mom_pkg_ENG_N;
 	input wire clk;
 	input wire rst_n;
 	input wire wr_en;
 	input wire wr_priv;
 	input wire [2:0] wr_engine;
 	input wire [42:0] wr_data;
-	localparam [31:0] mom_pkg_ENG_N = 5;
-	output wire [214:0] params;
+	output wire [(NENG * 43) - 1:0] params;
 	localparam [42:0] DEF_CPU = 43'h00001283fff;
 	localparam [42:0] DEF_SIMD = 43'h180420a3e3e;
 	localparam [42:0] DEF_TPU = 43'h38202810618;
 	localparam [42:0] DEF_NTT = 43'h28102044860;
 	localparam [42:0] DEF_CRYPTO = 43'h20082020980;
-	reg [42:0] row [0:4];
+	localparam [42:0] DEF_GPU = 43'h2040108080e;
+	reg [42:0] row [0:NENG - 1];
+	function automatic signed [31:0] sv2v_cast_32_signed;
+		input reg signed [31:0] inp;
+		sv2v_cast_32_signed = inp;
+	endfunction
 	always @(posedge clk or negedge rst_n)
 		if (!rst_n) begin
 			row[3'd0] <= DEF_CPU;
@@ -154,8 +160,13 @@ module mom_param_rom (
 			row[3'd2] <= DEF_TPU;
 			row[3'd3] <= DEF_NTT;
 			row[3'd4] <= DEF_CRYPTO;
+			begin : sv2v_autoblock_1
+				reg signed [31:0] e;
+				for (e = 32'sd5; e < sv2v_cast_32_signed(NENG); e = e + 1)
+					row[e] <= DEF_GPU;
+			end
 		end
-		else if ((wr_en && wr_priv) && ({29'd0, wr_engine} < mom_pkg_ENG_N))
+		else if ((wr_en && wr_priv) && ({29'd0, wr_engine} < NENG))
 			row[wr_engine] <= wr_data;
 	genvar _gv_e_1;
 	function automatic [42:0] sv2v_cast_43;
@@ -163,7 +174,7 @@ module mom_param_rom (
 		sv2v_cast_43 = inp;
 	endfunction
 	generate
-		for (_gv_e_1 = 0; _gv_e_1 < mom_pkg_ENG_N; _gv_e_1 = _gv_e_1 + 1) begin : g_unpack
+		for (_gv_e_1 = 0; _gv_e_1 < NENG; _gv_e_1 = _gv_e_1 + 1) begin : g_unpack
 			localparam e = _gv_e_1;
 			assign params[e * 43+:43] = sv2v_cast_43(row[e]);
 		end
@@ -332,6 +343,8 @@ module mom_calibrate (
 	upd_count,
 	last_dir
 );
+	localparam [31:0] mom_pkg_ENG_N = 5;
+	parameter [31:0] NENG = mom_pkg_ENG_N;
 	localparam [31:0] mom_pkg_KCAL_ALPHA = 4;
 	parameter [31:0] ALPHA = mom_pkg_KCAL_ALPHA;
 	parameter [7:0] K_MIN = 8'd4;
@@ -341,8 +354,7 @@ module mom_calibrate (
 	input wire freeze;
 	input wire reset_factors;
 	input wire [3:0] rd_opclass;
-	localparam [31:0] mom_pkg_ENG_N = 5;
-	output wire [39:0] rd_k;
+	output wire [(NENG * 8) - 1:0] rd_k;
 	input wire upd_valid;
 	input wire [2:0] upd_engine;
 	input wire [3:0] upd_opclass;
@@ -352,16 +364,16 @@ module mom_calibrate (
 	output reg [15:0] upd_count;
 	output reg last_dir;
 	localparam [31:0] NOPC = 9;
-	reg [7:0] k [0:4][0:8];
+	reg [7:0] k [0:NENG - 1][0:8];
 	genvar _gv_e_2;
 	localparam [7:0] mom_pkg_KCAL_UNITY = 8'd64;
 	generate
-		for (_gv_e_2 = 0; _gv_e_2 < mom_pkg_ENG_N; _gv_e_2 = _gv_e_2 + 1) begin : g_rd
+		for (_gv_e_2 = 0; _gv_e_2 < NENG; _gv_e_2 = _gv_e_2 + 1) begin : g_rd
 			localparam e = _gv_e_2;
 			assign rd_k[e * 8+:8] = ({28'd0, rd_opclass} < NOPC ? k[e][rd_opclass] : mom_pkg_KCAL_UNITY);
 		end
 	endgenerate
-	wire upd_idx_ok = ({29'd0, upd_engine} < mom_pkg_ENG_N) && ({28'd0, upd_opclass} < NOPC);
+	wire upd_idx_ok = ({29'd0, upd_engine} < NENG) && ({28'd0, upd_opclass} < NOPC);
 	wire [7:0] k_cur = (upd_idx_ok ? k[upd_engine][upd_opclass] : mom_pkg_KCAL_UNITY);
 	wire [39:0] t_cal_wide = upd_t_predicted * {32'd0, k_cur};
 	localparam [31:0] mom_pkg_KCAL_SHIFT = 6;
@@ -400,7 +412,7 @@ module mom_calibrate (
 		if (!rst_n) begin
 			begin : sv2v_autoblock_1
 				reg signed [31:0] e;
-				for (e = 0; e < mom_pkg_ENG_N; e = e + 1)
+				for (e = 0; e < NENG; e = e + 1)
 					begin : sv2v_autoblock_2
 						reg signed [31:0] c;
 						for (c = 0; c < NOPC; c = c + 1)
@@ -413,7 +425,7 @@ module mom_calibrate (
 		else if (reset_factors) begin
 			begin : sv2v_autoblock_3
 				reg signed [31:0] e;
-				for (e = 0; e < mom_pkg_ENG_N; e = e + 1)
+				for (e = 0; e < NENG; e = e + 1)
 					begin : sv2v_autoblock_4
 						reg signed [31:0] c;
 						for (c = 0; c < NOPC; c = c + 1)
@@ -442,25 +454,26 @@ module mom_select (
 	sel_margin
 );
 	reg _sv2v_0;
+	localparam [31:0] mom_pkg_ENG_N = 5;
+	parameter [31:0] NENG = mom_pkg_ENG_N;
 	parameter [0:0] WANT_MARGIN = 1;
 	localparam [31:0] mom_pkg_COST_W = 32;
-	localparam [31:0] mom_pkg_ENG_N = 5;
-	input wire [(mom_pkg_ENG_N * mom_pkg_COST_W) - 1:0] cost;
-	input wire [4:0] valid;
-	input wire [4:0] capable;
+	input wire [(NENG * mom_pkg_COST_W) - 1:0] cost;
+	input wire [NENG - 1:0] valid;
+	input wire [NENG - 1:0] capable;
 	output reg [2:0] sel_engine;
 	output reg [31:0] sel_cost;
 	output reg any_valid;
 	output reg any_capable;
 	output reg [31:0] sel_margin;
-	wire [35:0] lane [0:4];
+	wire [35:0] lane [0:NENG - 1];
 	genvar _gv_e_3;
 	function automatic signed [2:0] sv2v_cast_3_signed;
 		input reg signed [2:0] inp;
 		sv2v_cast_3_signed = inp;
 	endfunction
 	generate
-		for (_gv_e_3 = 0; _gv_e_3 < mom_pkg_ENG_N; _gv_e_3 = _gv_e_3 + 1) begin : g_pack
+		for (_gv_e_3 = 0; _gv_e_3 < NENG; _gv_e_3 = _gv_e_3 + 1) begin : g_pack
 			localparam e = _gv_e_3;
 			assign lane[e] = {~valid[e], cost[e * mom_pkg_COST_W+:mom_pkg_COST_W], sv2v_cast_3_signed(e)};
 		end
@@ -473,20 +486,36 @@ module mom_select (
 	wire [35:0] l1_a = pick(lane[0], lane[1]);
 	wire [35:0] l1_b = pick(lane[2], lane[3]);
 	wire [35:0] l2 = pick(l1_a, l1_b);
-	wire [35:0] best = pick(l2, lane[4]);
+	wire [35:0] best_chain [0:NENG - 5];
+	assign best_chain[0] = pick(l2, lane[4]);
+	genvar _gv_e_4;
+	generate
+		for (_gv_e_4 = 5; _gv_e_4 < NENG; _gv_e_4 = _gv_e_4 + 1) begin : g_more
+			localparam e = _gv_e_4;
+			assign best_chain[e - 4] = pick(best_chain[e - 5], lane[e]);
+		end
+	endgenerate
+	wire [35:0] best = best_chain[NENG - 5];
 	wire [35:0] snd;
 	generate
 		if (WANT_MARGIN) begin : g_margin
-			wire [35:0] lane2 [0:4];
-			genvar _gv_e_4;
-			for (_gv_e_4 = 0; _gv_e_4 < mom_pkg_ENG_N; _gv_e_4 = _gv_e_4 + 1) begin : g_pack2
-				localparam e = _gv_e_4;
+			wire [35:0] lane2 [0:NENG - 1];
+			genvar _gv_e_5;
+			for (_gv_e_5 = 0; _gv_e_5 < NENG; _gv_e_5 = _gv_e_5 + 1) begin : g_pack2
+				localparam e = _gv_e_5;
 				assign lane2[e] = (sv2v_cast_3_signed(e) == best[2:0] ? {1'b1, cost[e * mom_pkg_COST_W+:mom_pkg_COST_W], sv2v_cast_3_signed(e)} : lane[e]);
 			end
 			wire [35:0] m1_a = pick(lane2[0], lane2[1]);
 			wire [35:0] m1_b = pick(lane2[2], lane2[3]);
 			wire [35:0] m2 = pick(m1_a, m1_b);
-			assign snd = pick(m2, lane2[4]);
+			wire [35:0] snd_chain [0:NENG - 5];
+			assign snd_chain[0] = pick(m2, lane2[4]);
+			genvar _gv_e_6;
+			for (_gv_e_6 = 5; _gv_e_6 < NENG; _gv_e_6 = _gv_e_6 + 1) begin : g_more2
+				localparam e = _gv_e_6;
+				assign snd_chain[e - 4] = pick(snd_chain[e - 5], lane2[e]);
+			end
+			assign snd = snd_chain[NENG - 5];
 		end
 		else begin : g_no_margin
 			assign snd = {1'b1, {mom_pkg_COST_W {1'b0}}, 3'd0};
@@ -530,6 +559,8 @@ module mom_scoreboard (
 	tag_busy_vec
 );
 	reg _sv2v_0;
+	localparam [31:0] mom_pkg_ENG_N = 5;
+	parameter [31:0] NENG = mom_pkg_ENG_N;
 	parameter [31:0] NTAG = 16;
 	parameter [31:0] QMAX = 8;
 	input wire clk;
@@ -548,9 +579,8 @@ module mom_scoreboard (
 	output reg [3:0] cal_opclass;
 	output reg [31:0] cal_t_measured;
 	output reg [31:0] cal_t_predicted;
-	localparam [31:0] mom_pkg_ENG_N = 5;
-	output reg [39:0] queue_depth;
-	output wire [4:0] engine_full;
+	output reg [(NENG * 8) - 1:0] queue_depth;
+	output wire [NENG - 1:0] engine_full;
 	input wire [3:0] fence_tag;
 	output wire fence_busy;
 	output reg err_stale_comp;
@@ -593,7 +623,7 @@ module mom_scoreboard (
 				end
 		end
 	end
-	wire disp_engine_ok = {29'd0, disp_engine} < mom_pkg_ENG_N;
+	wire disp_engine_ok = {29'd0, disp_engine} < NENG;
 	wire comp_tag_ok = {28'd0, comp_tag} < NTAG;
 	wire [TIW - 1:0] comp_i = comp_tag[TIW - 1:0];
 	wire [TIW - 1:0] fence_i = fence_tag[TIW - 1:0];
@@ -608,14 +638,14 @@ module mom_scoreboard (
 			err_stale_comp <= 1'b0;
 		else
 			err_stale_comp <= stale_comp;
-	genvar _gv_e_5;
+	genvar _gv_e_7;
 	function automatic signed [2:0] sv2v_cast_3_signed;
 		input reg signed [2:0] inp;
 		sv2v_cast_3_signed = inp;
 	endfunction
 	generate
-		for (_gv_e_5 = 0; _gv_e_5 < mom_pkg_ENG_N; _gv_e_5 = _gv_e_5 + 1) begin : g_queue
-			localparam e = _gv_e_5;
+		for (_gv_e_7 = 0; _gv_e_7 < NENG; _gv_e_7 = _gv_e_7 + 1) begin : g_queue
+			localparam e = _gv_e_7;
 			wire inc = do_disp && (disp_engine == sv2v_cast_3_signed(e));
 			wire dec = do_comp && (t_eng[comp_i] == sv2v_cast_3_signed(e));
 			always @(posedge clk or negedge rst_n)
@@ -697,6 +727,8 @@ module mom_top (
 	obs_cal_updates,
 	obs_tag_busy
 );
+	localparam [31:0] mom_pkg_ENG_N = 5;
+	parameter [31:0] NENG = mom_pkg_ENG_N;
 	parameter [0:0] COST_SHARED = 1'b1;
 	parameter [31:0] NTAG = 16;
 	parameter [31:0] QMAX = 8;
@@ -749,9 +781,8 @@ module mom_top (
 		.out_log2_q(f_lg_q),
 		.out_log2_i(f_lg_i)
 	);
-	localparam [31:0] mom_pkg_ENG_N = 5;
-	wire [214:0] params;
-	mom_param_rom u_prom(
+	wire [(NENG * 43) - 1:0] params;
+	mom_param_rom #(.NENG(NENG)) u_prom(
 		.clk(clk),
 		.rst_n(rst_n),
 		.wr_en(csr_wr),
@@ -760,16 +791,16 @@ module mom_top (
 		.wr_data(csr_data),
 		.params(params)
 	);
-	wire [39:0] queue_depth;
-	wire [4:0] engine_full;
+	wire [(NENG * 8) - 1:0] queue_depth;
+	wire [NENG - 1:0] engine_full;
 	wire cal_valid;
 	wire [2:0] cal_engine;
 	wire [3:0] cal_opclass;
 	wire [31:0] cal_t_meas;
 	wire [31:0] cal_t_pred;
-	wire [39:0] k_cal;
+	wire [(NENG * 8) - 1:0] k_cal;
 	wire cal_last_dir;
-	mom_calibrate u_cal(
+	mom_calibrate #(.NENG(NENG)) u_cal(
 		.clk(clk),
 		.rst_n(rst_n),
 		.freeze(csr_cal_freeze),
@@ -784,10 +815,10 @@ module mom_top (
 		.upd_count(obs_cal_updates),
 		.last_dir(cal_last_dir)
 	);
-	wire [(mom_pkg_ENG_N * mom_pkg_COST_W) - 1:0] cost;
-	wire [(mom_pkg_ENG_N * mom_pkg_COST_W) - 1:0] t_pred;
-	wire [4:0] cvalid;
-	wire [4:0] ccapable;
+	wire [(NENG * mom_pkg_COST_W) - 1:0] cost;
+	wire [(NENG * mom_pkg_COST_W) - 1:0] t_pred;
+	wire [NENG - 1:0] cvalid;
+	wire [NENG - 1:0] ccapable;
 	wire eval_done;
 	reg eval_busy;
 	wire lane_we;
@@ -817,9 +848,9 @@ module mom_top (
 	endfunction
 	generate
 		if (!COST_SHARED) begin : g_parallel
-			genvar _gv_e_6;
-			for (_gv_e_6 = 0; _gv_e_6 < mom_pkg_ENG_N; _gv_e_6 = _gv_e_6 + 1) begin : g_cost
-				localparam e = _gv_e_6;
+			genvar _gv_e_8;
+			for (_gv_e_8 = 0; _gv_e_8 < NENG; _gv_e_8 = _gv_e_8 + 1) begin : g_cost
+				localparam e = _gv_e_8;
 				mom_cost_engine #(.ENGINE_ID(sv2v_cast_3(e))) u_ce(
 					.clk(clk),
 					.rst_n(rst_n),
@@ -858,7 +889,7 @@ module mom_top (
 		else begin : g_shared
 			reg [2:0] idx;
 			reg phase;
-			wire last = ({29'd0, idx} == 4) && phase;
+			wire last = ({29'd0, idx} == (NENG - 1)) && phase;
 			always @(posedge clk or negedge rst_n)
 				if (!rst_n) begin
 					idx <= 3'd0;
@@ -917,16 +948,16 @@ module mom_top (
 			assign lane_tpred = s_tpred;
 			assign lane_valid = s_valid;
 			assign lane_capable = s_capable;
-			assign cost = {mom_pkg_ENG_N * mom_pkg_COST_W {1'b0}};
-			assign t_pred = {mom_pkg_ENG_N * mom_pkg_COST_W {1'b0}};
-			assign cvalid = {mom_pkg_ENG_N {1'b0}};
-			assign ccapable = {mom_pkg_ENG_N {1'b0}};
+			assign cost = {NENG * mom_pkg_COST_W {1'b0}};
+			assign t_pred = {NENG * mom_pkg_COST_W {1'b0}};
+			assign cvalid = {NENG {1'b0}};
+			assign ccapable = {NENG {1'b0}};
 		end
 	endgenerate
-	reg [(mom_pkg_ENG_N * mom_pkg_COST_W) - 1:0] cost_q;
-	reg [(mom_pkg_ENG_N * mom_pkg_COST_W) - 1:0] t_pred_q;
-	reg [4:0] cvalid_q;
-	reg [4:0] ccapable_q;
+	reg [(NENG * mom_pkg_COST_W) - 1:0] cost_q;
+	reg [(NENG * mom_pkg_COST_W) - 1:0] t_pred_q;
+	reg [NENG - 1:0] cvalid_q;
+	reg [NENG - 1:0] ccapable_q;
 	reg [127:0] c_wd;
 	reg [127:0] a_wd;
 	wire a_load = (COST_SHARED ? 1'b0 : a_adv && f_valid);
@@ -946,10 +977,10 @@ module mom_top (
 	always @(posedge clk or negedge rst_n)
 		if (!rst_n) begin
 			c_valid <= 1'b0;
-			cost_q <= {mom_pkg_ENG_N * mom_pkg_COST_W {1'b0}};
-			t_pred_q <= {mom_pkg_ENG_N * mom_pkg_COST_W {1'b0}};
-			cvalid_q <= {mom_pkg_ENG_N {1'b0}};
-			ccapable_q <= {mom_pkg_ENG_N {1'b0}};
+			cost_q <= {NENG * mom_pkg_COST_W {1'b0}};
+			t_pred_q <= {NENG * mom_pkg_COST_W {1'b0}};
+			cvalid_q <= {NENG {1'b0}};
+			ccapable_q <= {NENG {1'b0}};
 			c_wd <= {mom_pkg_WD_W {1'b0}};
 		end
 		else if (COST_SHARED) begin
@@ -980,7 +1011,7 @@ module mom_top (
 	wire [31:0] sel_cost;
 	wire sel_ok;
 	wire sel_capable;
-	mom_select u_sel(
+	mom_select #(.NENG(NENG)) u_sel(
 		.cost(cost_q),
 		.valid(cvalid_q),
 		.capable(ccapable_q),
@@ -1003,6 +1034,7 @@ module mom_top (
 		end
 	wire sb_ready;
 	mom_scoreboard #(
+		.NENG(NENG),
 		.NTAG(NTAG),
 		.QMAX(QMAX)
 	) u_sb(
