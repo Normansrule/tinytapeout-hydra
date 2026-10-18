@@ -199,6 +199,8 @@ GDS by Tiny Tapeout's own tool (`./tt/tt_tool.py --create-png`).*
 | Gate level, v3.6 netlist | **21 / 21** |
 | Harden after the engine-count change (v3.7), 2026-10-18 | **sign-off clean**: DRC, LVS, antenna 0; setup +9.39 ns (v3.7), hold +0.107 ns; 48.9%; 1,333 slew (slow corners only), 1 capacitance. The netlist is proved equivalent to v3.6's; the layout differs because the tools saw renamed logic |
 | Gate level, v3.7 netlist | **21 / 21** |
+| Harden after the ABI-v2 eligibility tie-off (v3.8), 2026-10-18 | **sign-off clean**: DRC, LVS, antenna 0; setup +10.06 ns (v3.8), hold +0.108 ns; 48.7%; 1,164 slew (slow corners only), 0 capacitance. Netlist proved equivalent to v3.7's |
+| Gate level, v3.8 netlist | **21 / 21** |
 | Verilator `-Wall` on `src/project.v` | **0 warnings** (was 93) |
 
 ## How to test

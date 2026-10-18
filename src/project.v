@@ -702,6 +702,7 @@ module mom_top (
 	wd_valid,
 	wd_ready,
 	wd,
+	eng_elig,
 	disp_valid,
 	disp_accept,
 	disp_engine,
@@ -737,6 +738,7 @@ module mom_top (
 	input wire wd_valid;
 	output wire wd_ready;
 	input wire [127:0] wd;
+	input wire [NENG - 1:0] eng_elig;
 	output wire disp_valid;
 	input wire disp_accept;
 	output wire [2:0] disp_engine;
@@ -1013,8 +1015,8 @@ module mom_top (
 	wire sel_capable;
 	mom_select #(.NENG(NENG)) u_sel(
 		.cost(cost_q),
-		.valid(cvalid_q),
-		.capable(ccapable_q),
+		.valid(cvalid_q & eng_elig),
+		.capable(ccapable_q & eng_elig),
 		.sel_engine(sel_eng),
 		.sel_cost(sel_cost),
 		.any_valid(sel_ok),
@@ -1670,6 +1672,7 @@ module tt_um_hydra_mom (
 		.last_tag(r_last_tag),
 		.margin_nib(r_margin_nib)
 	);
+	localparam [31:0] mom_pkg_ENG_N = 5;
 	function automatic [127:0] sv2v_cast_128;
 		input reg [127:0] inp;
 		sv2v_cast_128 = inp;
@@ -1680,6 +1683,7 @@ module tt_um_hydra_mom (
 	) u_mom(
 		.clk(clk),
 		.rst_n(rst_n_sync),
+		.eng_elig({mom_pkg_ENG_N {1'b1}}),
 		.wd_valid(r_wd_valid),
 		.wd_ready(wd_ready),
 		.wd(sv2v_cast_128(r_wd)),

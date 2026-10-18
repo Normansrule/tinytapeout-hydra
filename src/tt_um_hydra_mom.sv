@@ -207,6 +207,7 @@ module tt_um_hydra_mom
 
   mom_top #(.NTAG(NTAG), .QMAX(NTAG)) u_mom (
     .clk(clk), .rst_n(rst_n_sync),
+    .eng_elig({ENG_N{1'b1}}),   // every engine eligible: version-1 behaviour
     .wd_valid(r_wd_valid), .wd_ready(wd_ready), .wd(work_desc_t'(r_wd)),
     .disp_valid(disp_valid), .disp_accept(r_disp_accept),
     .disp_engine(disp_engine), .disp_tag(disp_tag), .disp_wd(disp_wd),
