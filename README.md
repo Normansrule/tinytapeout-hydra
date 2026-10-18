@@ -146,8 +146,15 @@ core, 21 / 21 tests on its netlist. Slew is not fixed yet: the run's
 -1.551 ns) and 635 at the typical corner (worst -0.633 ns), plus 30
 capacitance warnings (v3.2 at 50% margins: 3,665 and 11). The delay cells are
 gone; every one of the worst nets is now a `buf_1` fanout buffer driving 10
-to 13 loads, so the next change sizes those buffers. All nine corners are in
-the parent repository's `docs/timing.json`.
+to 13 loads. All nine corners are in the parent repository's `docs/timing.json`.
+
+**v3.5** also excluded `buf_1` and `clkbuf_1`: the resizer used the
+`dlygate4sd3_1` delay gate instead and setup failed by 2.403 ns, so it was
+rejected. **v3.6 signed off clean on 2026-10-17** with every weak and delay
+buffer excluded (`buf_1`, `clkbuf_1`, `dlygate4sd*`, `dlymetal6s*`,
+`clkdlybuf4s*`): setup **+14.84 ns** (v3.6) at every corner, hold +0.106 ns,
+48.9% of the core, slew warnings 4,197 → **775**, only at the three slow
+corners, capacitance 30 → **0**, and 21 / 21 tests on its netlist.
 
 The submitted `src/project.v` is now Verilator `-Wall` clean with LibreLane's
 lint settings: 0 warnings, down from 93 (widths made explicit, unused bits
@@ -187,6 +194,9 @@ GDS by Tiny Tapeout's own tool (`./tt/tt_tool.py --create-png`).*
 | Harden with the delay buffers excluded, 50% margins (v3.3) | hung in post-placement repair (net 7,000 of 11,823) for over a day; stopped |
 | Harden with the delay buffers excluded, 20% margins (v3.4), 2026-10-17 | **sign-off clean in 11 minutes**: DRC, LVS, antenna 0; setup **+11.14 ns**, hold +0.107 ns worst corner; 51.7%; 4,197 slew and 30 capacitance warnings |
 | Gate level, v3.4 netlist | **21 / 21** |
+| Harden excluding `buf_1`/`clkbuf_1` too (v3.5), 2026-10-17 | setup **failed** by 2.403 ns (delay gates used instead); rejected |
+| Harden with no weak or delay buffers (v3.6), 2026-10-17 | **sign-off clean**: DRC, LVS, antenna 0; setup **+14.84 ns** (v3.6), hold +0.106 ns; 48.9%; 775 slew (slow corners only), 0 capacitance |
+| Gate level, v3.6 netlist | **21 / 21** |
 | Verilator `-Wall` on `src/project.v` | **0 warnings** (was 93) |
 
 ## How to test
