@@ -85,6 +85,10 @@ MUTATIONS = [
     ("pin summaries show the wrong engine",
      "src/tt_um_hydra_mom.sv", "r_disp_sticky, r_last_engine, r_irq", "r_disp_sticky, 3'd0, r_irq",
      "test_reg_readback_and_pin_summaries"),
+    ("queue-full captured when the descriptor is costed, never re-read (v3.9 liveness)",
+     "src/rtl/mom_top.sv", "        ccapable_q[lane_idx] <= lane_capable;",
+     "        ccapable_q[lane_idx] <= lane_capable && !engine_full[lane_idx];",
+     "test_full_only_engine_recovers"),
 ]
 
 RESULT_RE = re.compile(r"\*\*\s+(test\w*)\.(\w+)\s+(PASS|FAIL)")

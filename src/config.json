@@ -95,6 +95,13 @@
   "//": "+14.836 ns, hold +0.106 ns; 48.9%; slew 4197 -> 775 (slow corners only:",
   "//": "max_ss 775, nom_ss 559, min_ss 322; typical and fast 0); capacitance",
   "//": "30 -> 0; 21/21 on the hardened netlist.",
+  "//": "v3.9 (2026-10-18, rung realbuf35): the same exclusions with the slew",
+  "//": "repair margin 20 -> 35%. Clean (DRC, LVS, antenna 0; setup +10.314 ns,",
+  "//": "hold +0.107 ns; 49.0%; 21/21 gate level) but NOT ADOPTED: slow corners",
+  "//": "759 / 480 / 265 against v3.6's 775 / 559 / 322, and one net (a buf_2",
+  "//": "fanout buffer with 15 loads) now fails at the three typical corners (16",
+  "//": "each), where v3.6 had 0. The margin stays at 20; what is left is buf_2",
+  "//": "fanout buffers and gates driving 10-16 loads, a fanout problem.",
   "EXTRA_EXCLUDED_CELLS": ["sky130_fd_sc_hd__clkdlybuf4s*", "sky130_fd_sc_hd__dlygate4sd*", "sky130_fd_sc_hd__dlymetal6s*", "sky130_fd_sc_hd__buf_1", "sky130_fd_sc_hd__clkbuf_1"],
 
   "//": "Antenna repair. Session 139 set RUN_ANTENNA_REPAIR and GRT_REPAIR_ANTENNAS,",

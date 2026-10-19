@@ -12,13 +12,22 @@ module hydra_rst_sync (
 	input wire scan_mode;
 	input wire scan_rst_n;
 	output wire rst_n;
-	reg [STAGES - 1:0] sync_q;
+	reg [STAGES - 2:0] sync_q;
+	reg rel_q;
+	function automatic signed [((STAGES - 2) >= 0 ? STAGES - 1 : 3 - STAGES) - 1:0] sv2v_cast_EB2F4_signed;
+		input reg signed [((STAGES - 2) >= 0 ? STAGES - 1 : 3 - STAGES) - 1:0] inp;
+		sv2v_cast_EB2F4_signed = inp;
+	endfunction
 	always @(posedge clk or negedge arst_n)
-		if (!arst_n)
-			sync_q <= {STAGES {1'b0}};
-		else
-			sync_q <= {sync_q[STAGES - 2:0], 1'b1};
-	assign rst_n = (scan_mode ? scan_rst_n : sync_q[STAGES - 1]);
+		if (!arst_n) begin
+			sync_q <= {STAGES - 1 {1'b0}};
+			rel_q <= 1'b0;
+		end
+		else begin
+			sync_q <= (sync_q << 1) | sv2v_cast_EB2F4_signed(1);
+			rel_q <= sync_q[STAGES - 2];
+		end
+	assign rst_n = (scan_mode ? scan_rst_n : rel_q);
 endmodule
 `default_nettype wire
 `default_nettype none
@@ -867,7 +876,7 @@ module mom_top (
 					.param(params[e * 43+:43]),
 					.k_cal(k_cal[e * 8+:8]),
 					.queue_depth(queue_depth[e * 8+:8]),
-					.engine_busy_full(engine_full[e]),
+					.engine_busy_full(1'b0),
 					.bw_dma_log2(csr_bw_dma_log2),
 					.eps_mem(csr_eps_mem),
 					.e_shift(csr_e_shift),
@@ -935,7 +944,7 @@ module mom_top (
 				.param(params[idx * 43+:43]),
 				.k_cal(k_cal[idx * 8+:8]),
 				.queue_depth(queue_depth[idx * 8+:8]),
-				.engine_busy_full(engine_full[idx]),
+				.engine_busy_full(1'b0),
 				.bw_dma_log2(csr_bw_dma_log2),
 				.eps_mem(csr_eps_mem),
 				.e_shift(csr_e_shift),
@@ -958,7 +967,6 @@ module mom_top (
 	endgenerate
 	reg [(NENG * mom_pkg_COST_W) - 1:0] cost_q;
 	reg [(NENG * mom_pkg_COST_W) - 1:0] t_pred_q;
-	reg [NENG - 1:0] cvalid_q;
 	reg [NENG - 1:0] ccapable_q;
 	reg [127:0] c_wd;
 	reg [127:0] a_wd;
@@ -981,7 +989,6 @@ module mom_top (
 			c_valid <= 1'b0;
 			cost_q <= {NENG * mom_pkg_COST_W {1'b0}};
 			t_pred_q <= {NENG * mom_pkg_COST_W {1'b0}};
-			cvalid_q <= {NENG {1'b0}};
 			ccapable_q <= {NENG {1'b0}};
 			c_wd <= {mom_pkg_WD_W {1'b0}};
 		end
@@ -989,7 +996,6 @@ module mom_top (
 			if (lane_we) begin
 				cost_q[lane_idx * mom_pkg_COST_W+:mom_pkg_COST_W] <= lane_cost;
 				t_pred_q[lane_idx * mom_pkg_COST_W+:mom_pkg_COST_W] <= lane_tpred;
-				cvalid_q[lane_idx] <= lane_valid;
 				ccapable_q[lane_idx] <= lane_capable;
 			end
 			if (eval_done) begin
@@ -1004,7 +1010,6 @@ module mom_top (
 			if (a_valid) begin
 				cost_q <= cost;
 				t_pred_q <= t_pred;
-				cvalid_q <= cvalid;
 				ccapable_q <= ccapable;
 				c_wd <= a_wd;
 			end
@@ -1015,7 +1020,7 @@ module mom_top (
 	wire sel_capable;
 	mom_select #(.NENG(NENG)) u_sel(
 		.cost(cost_q),
-		.valid(cvalid_q & eng_elig),
+		.valid((ccapable_q & ~engine_full) & eng_elig),
 		.capable(ccapable_q & eng_elig),
 		.sel_engine(sel_eng),
 		.sel_cost(sel_cost),
@@ -1067,7 +1072,7 @@ module mom_top (
 	assign disp_wd = c_wd;
 	assign c_ready = (disp_valid && disp_accept) || unsupported;
 	assign f_ready = (COST_SHARED ? eval_done : a_adv);
-	wire _unused_ok = &{1'b0, f_lg_q, sel_cost, cal_last_dir};
+	wire _unused_ok = &{1'b0, f_lg_q, sel_cost, cal_last_dir, cvalid, lane_valid};
 endmodule
 `default_nettype wire
 `default_nettype none

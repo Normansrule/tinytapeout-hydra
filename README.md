@@ -33,7 +33,7 @@ file for file; everything else here was cut to the experiment.
 | Host interfaces | v1 serial pins **and** SPI, strapped at reset | SPI only |
 | Tags in flight | 8 | 4 |
 | Descriptor readback (LASTWD) | yes | no |
-| Tests | 17 | 21 |
+| Tests | 17 | 22 |
 
 - **The serial pins went.** v1's protocol shifted the 128-bit descriptor in
   one bit per clock, through a shift register that toggled on every shift.
@@ -201,6 +201,9 @@ GDS by Tiny Tapeout's own tool (`./tt/tt_tool.py --create-png`).*
 | Gate level, v3.7 netlist | **21 / 21** |
 | Harden after the ABI-v2 eligibility tie-off (v3.8), 2026-10-18 | **sign-off clean**: DRC, LVS, antenna 0; setup +10.06 ns (v3.8), hold +0.108 ns; 48.7%; 1,164 slew (slow corners only), 0 capacitance. Netlist proved equivalent to v3.7's |
 | Gate level, v3.8 netlist | **21 / 21** |
+| v3.9, slew repair margin 35% (logic as v3.8), 2026-10-18 | **sign-off clean**: DRC, LVS, antenna 0; setup +10.31 ns, hold +0.107 ns; 49.0%; slew 759 / 480 / 265 at the slow corners and 16 at each typical corner, 0 capacitance; 21/21 gate level. Not adopted: no better than v3.6 and adds typical-corner slew |
+| Harden after the scheduler liveness fix (v3.10, v3.6 settings), 2026-10-18 | **sign-off clean**: DRC, LVS, antenna 0; setup +14.06 ns, hold +0.105 ns; 48.6%; slew 1,230 / 819 / 557 at the slow corners and 21 / 11 / 11 at the typical corners, 0 capacitance |
+| Gate level, v3.10 netlist | **22 / 22** (the new test is `test_full_only_engine_recovers`) |
 | Verilator `-Wall` on `src/project.v` | **0 warnings** (was 93) |
 
 ## How to test

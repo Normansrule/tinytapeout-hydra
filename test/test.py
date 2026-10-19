@@ -40,6 +40,7 @@ from cocotb.triggers import ClockCycles
 # cost model rather than a broken constant. Copy them from the package; do not
 # infer them.
 OPC_GEMM = 3
+OPC_NTT = 6
 DT_INT8 = 0
 DT_POLY_Q = 5
 LAT_BALANCED = 1
@@ -426,6 +427,44 @@ async def test_tag_exhaustion_and_recovery(dut):
     st = await t.status()
     assert busy == 0 and bit(st, ST_READY) and not bit(st, ST_BUSY), \
         f"not idle after retiring everything: busy {busy:#x} status {st:#06x}"
+
+
+@cocotb.test()
+async def test_full_only_engine_recovers(dut):
+    """A held descriptor whose ONLY capable engine was full must still go.
+
+    The test above uses a matrix multiply, which three engines can run, so a
+    full engine is simply skipped. An NTT on POLY_Q data can run only on the
+    NTT slot. Four of them fill that slot's queue (QMAX is NTAG here) and
+    every tag; the fifth is costed while the slot is full. Up to v3.9 the
+    scheduler decided "full" once, when it costed the descriptor, and never
+    looked again: the fifth waited forever after a tag was retired. It must
+    dispatch to the NTT slot, with the freed tag, without being offered again.
+    """
+    ntt = build_descriptor(OPC_NTT, DT_POLY_Q, LAT_BALANCED, PWR_BALANCED, 1024, 0, 0, 8192)
+    t = await start(dut)
+    seen = []
+    for i in range(NTAG):
+        st, r = await t.dispatch(ntt)
+        assert bit(st, ST_DISP), f"NTT job {i} did not dispatch: {st:#06x}"
+        assert r["engine"] == ENG_NTT, f"NTT job {i} went to {ENG_NAME[r['engine']]}"
+        seen.append(r["tag"])
+        await t.clear()
+    await t.write(A_WD, ntt)
+    await t.go()
+    await ClockCycles(dut.clk, 40)
+    st = await t.status()
+    assert not bit(st, ST_DISP), "dispatched with the NTT queue full and no free tag"
+    assert not bit(st, ST_UNSUPP), "a held NTT job was reported as unsupported"
+
+    await t.comp(seen[1])
+    await ClockCycles(dut.clk, 40)
+    st = await t.status()
+    r = await t.result()
+    assert bit(st, ST_DISP), \
+        f"held NTT job did not dispatch after tag {seen[1]} was retired: {st:#06x}"
+    assert r["engine"] == ENG_NTT and r["tag"] == seen[1], \
+        f"held NTT job went to {ENG_NAME[r['engine']]} with tag {r['tag']}, expected NTT with {seen[1]}"
 
 
 @cocotb.test()
