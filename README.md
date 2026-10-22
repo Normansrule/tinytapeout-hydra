@@ -68,6 +68,13 @@ Then down to single cells, drawn from the process design kit's own layout of eac
   <img src="docs/img/atlas-cells.png" width="100%" alt="Standard cells of this tile: green diffusion, red polysilicon gates, violet local interconnect and blue metal 1, with one of the cost engine's flip-flops, a dfrtp_2, marked by alignment brackets.">
 </picture>
 
+Then the mask pulled apart: the cells and the four metal layers of this tile as a turning 3D stack:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/atlas-exploded.dark.png">
+  <img src="docs/img/atlas-exploded.png" width="100%" alt="This tile's cells and four metal layers drawn as an exploded 3D stack, each layer labelled with its rectangle count, with the nets high at the select glowing on every layer.">
+</picture>
+
 And back out to the whole tile, with every net that is high at the select glowing:
 
 <picture>
