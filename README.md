@@ -10,6 +10,13 @@ interface (SPI) pins: hand it a job, read the decision, tell it when the job fin
 to try hardware scheduling on a real chip from the Tiny Tapeout shuttle, or who's curious what a self-correcting
 cost model looks like in a few thousand standard cells.
 
+<p align="center">
+  <a href="https://normansrule.github.io/hydra-skywater130/#tile"><picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/site_button.dark.svg">
+    <img src="docs/img/site_button.svg" width="460" alt="View the full site: the Silicon Atlas">
+  </picture></a>
+</p>
+
 [Zoom into this tile](https://normansrule.github.io/hydra-skywater130/) ·
 [Explore its layout](https://normansrule.github.io/hydra-skywater130/#layout) ·
 [Its pins and registers](https://normansrule.github.io/hydra-skywater130/#tile) ·
@@ -23,7 +30,9 @@ Maintained by [@Normansrule](https://github.com/Normansrule)
 > The engines it chooses between are outside it, and the host reports when a job finished. The **v3.10** harden
 > (2026-10-18, one LibreLane run at 4×4 tiles, 66 ns) signed off with design rules, layout versus schematic and
 > antenna clean and timing met at all nine corners, and all 22 tests pass on its netlist. It still has **1,230
-> slew warnings** at the slowest corner. A signed-off layout is not fabricated or tested silicon.
+> slew warnings** at the slowest corner. A signed-off layout is not fabricated or tested silicon. This
+> repository's own `gds` workflow (Tiny Tapeout's GitHub flow, which builds the submission) does not yet finish:
+> its Verilator 5.018 lint stops on one reset loop in `src/project.v` (BLKLOOPINIT) that Verilator 5.032 accepts.
 
 <p align="center">
 <picture>
@@ -50,6 +59,12 @@ Maintained by [@Normansrule](https://github.com/Normansrule)
   readable without any SPI traffic.
 
 ## Screenshots
+
+This tile in motion, filmed from the atlas page:
+
+<p align="center">
+  <img src="docs/img/story.webp" width="100%" alt="The atlas's opening story filmed from the page: the hardened tile's whole routed layout, the dispatch unit's cells coloured by block, one decision lighting the wires cycle by cycle, single standard cells, the cells and four metal layers pulled apart into a turning 3D stack, and the whole tile again with the 1,813 nets that switched.">
+</p>
 
 The [Silicon Atlas](https://normansrule.github.io/hydra-skywater130/) opens on this tile's own routed layout from
 the v3.10 harden and zooms in while one decision plays on it. Each wire glows while its net is high in a
