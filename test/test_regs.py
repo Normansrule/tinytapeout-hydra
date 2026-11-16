@@ -22,7 +22,7 @@ from cocotb.triggers import ClockCycles
 from test import (build_descriptor, bit, start, Tile, OPC_GEMM, DT_INT8,
                   LAT_BALANCED, PWR_BALANCED, ENG_NAME, ENG_SIMD, ENG_TPU, NTAG,
                   ID_V3, A_ID, A_WD, A_CTRL, A_ACTION, A_COMP, A_STATUS, A_RESULT,
-                  A_RESERVED07, A_CALUPD, A_BUSY, A_FENCE, A_PARAM, A_GLOBAL, A_INFO,
+                  A_RESERVED07, A_CALUPD, A_BUSY, A_FENCE, A_PARAM, A_GLOBAL, A_INFO, A_PINS, A_GPO,
                   ST_READY, ST_BUSY, ST_PENDING, ST_WD_OK, ST_DISP, ST_UNSUPP,
                   ST_STALE, ST_FRAME, ST_GOERR, ST_FENCE, ST_PLOCK, ST_HOLD,
                   SMALL, LARGE)
@@ -390,3 +390,70 @@ async def test_reg_fence_on_a_tag_that_does_not_exist(dut):
         assert not bit(st, ST_FENCE), f"fence on nonexistent tag {tag} reads busy: {st:#06x}"
     await t.write(A_FENCE, 0)
     assert bit(await t.status(), ST_FENCE), "fence on a busy real tag reads free"
+
+
+@cocotb.test()
+async def test_reg_pins_read_every_spare_input(dut):
+    """PINS (0x0E, v3.11) gives every otherwise unused input pin a job.
+
+    ui_in[7:3] are general-purpose inputs, uio_in reads back the
+    bidirectional pads (on silicon they carry the tile's own tag and margin,
+    so a mismatch points at a pad driver or the board), and ena is bit 13.
+    The value must follow the pins through the two-flop synchroniser, bit for
+    bit, while SPI traffic runs on ui_in[2:0], and must never leak into the
+    SPI pins' function. A walking one and random patterns check every bit
+    and every position.
+    """
+    import random
+    rnd = random.Random(0x50E)
+    t = await start(dut)
+    patterns = [(1 << i) for i in range(14)] + [rnd.getrandbits(14) for _ in range(12)] + [0x3FFF, 0]
+    for want in patterns:
+        uio, gpi, ena = want & 0xFF, (want >> 8) & 0x1F, (want >> 13) & 1
+        dut.uio_in.value = uio
+        dut.ena.value = ena
+        t.gpi = gpi
+        t._set()
+        await ClockCycles(dut.clk, 3)
+        got, _ = await t.read(A_PINS)
+        assert got == want, f"PINS read {got:#06x}, pins are {want:#06x} (ena {ena}, ui_in[7:3] {gpi:#04x}, uio_in {uio:#04x})"
+    dut.ena.value = 1
+    # the spare inputs must not disturb the register interface
+    t.gpi = 0x1F
+    t._set()
+    ident, _ = await t.read(A_ID)
+    assert ident == ID_V3, f"ID read {ident:#x} with ui_in[7:3] all high"
+    assert not bit(await t.status(), ST_FRAME), "spare inputs caused a frame error"
+    # read-only: a write is a frame error and changes nothing
+    await t.write(A_PINS, 0x0000, nbytes=2)
+    assert bit(await t.status(), ST_FRAME), "write to PINS was not refused"
+    got, _ = await t.read(A_PINS)
+    assert got == (1 << 13) | (0x1F << 8), f"PINS changed by a write: {got:#06x}"
+
+
+@cocotb.test()
+async def test_reg_gpo_drives_the_spare_bidirectionals(dut):
+    """uio[3:2] were tag bits that four tags never set (always 0). Since
+    v3.11 they are general-purpose outputs written in GPO (0x0F): reset 0,
+    each value appears on the pins and reads back, the tag keeps uio[1:0],
+    and with uio_in looped back from uio_out (as the pads do on silicon) the
+    PINS register sees them."""
+    t = await start(dut)
+    assert (int(dut.uio_out.value) >> 2) & 3 == 0, "GPO not 0 after reset"
+    assert (await t.read(A_GPO))[0] == 0
+    st, r = await t.dispatch(SMALL)
+    assert bit(st, ST_DISP)
+    tag = r["tag"]
+    for v in (1, 2, 3, 0, 3):
+        await t.write(A_GPO, v)
+        uio = int(dut.uio_out.value)
+        assert (uio >> 2) & 3 == v, f"GPO wrote {v}, uio[3:2] = {(uio >> 2) & 3}"
+        assert uio & 3 == tag, f"the tag on uio[1:0] changed to {uio & 3} after a GPO write"
+        assert (await t.read(A_GPO))[0] == v, "GPO did not read back"
+        dut.uio_in.value = uio                    # the pads, looped back
+        await ClockCycles(dut.clk, 3)
+        pins, _ = await t.read(A_PINS)
+        assert pins & 0xFF == uio, f"PINS saw uio {pins & 0xFF:#04x}, pads carry {uio:#04x}"
+    assert not bit(await t.status(), ST_FRAME), "a GPO write was refused"
+    await t.write(A_GPO, 0xFC)                     # only bits 1:0 exist
+    assert (await t.read(A_GPO))[0] == 0, "GPO kept bits above [1:0]"

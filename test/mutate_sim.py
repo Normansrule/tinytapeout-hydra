@@ -89,6 +89,18 @@ MUTATIONS = [
      "src/rtl/mom_top.sv", "        ccapable_q[lane_idx] <= lane_capable;",
      "        ccapable_q[lane_idx] <= lane_capable && !engine_full[lane_idx];",
      "test_full_only_engine_recovers"),
+    ("PINS reads the SPI pins instead of the spare inputs (v3.11)",
+     "src/tt_um_hydra_mom.sv", "pins_meta <= {ena, ui_in[7:3], uio_in};",
+     "pins_meta <= {ena, ui_in[6:2], uio_in};",
+     "test_reg_pins_read_every_spare_input"),
+    ("PINS register not wired: reads 0 (v3.11)",
+     "src/rtl/hydra_tt_regs.sv", "A_PINS:   rval = {{(WD_W-16){1'b0}}, pins_in};",
+     "A_PINS:   rval = {WD_W{1'b0}};",
+     "test_reg_pins_read_every_spare_input"),
+    ("GPO not on the pins: uio[3:2] stay 0 (v3.11)",
+     "src/tt_um_hydra_mom.sv", "assign uio_out = { r_margin_nib, r_gpo, r_last_tag[1:0] };",
+     "assign uio_out = { r_margin_nib, 2'b00, r_last_tag[1:0] };",
+     "test_reg_gpo_drives_the_spare_bidirectionals"),
 ]
 
 RESULT_RE = re.compile(r"\*\*\s+(test\w*)\.(\w+)\s+(PASS|FAIL)")

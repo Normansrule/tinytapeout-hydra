@@ -133,12 +133,12 @@ peripheral at 1 MHz, a few milliseconds bit-banged.
 
 ## Verification before tapeout
 
-- 22 cocotb tests from the pins: the roofline crossover, retuning that moves
+- 24 cocotb tests from the pins: the roofline crossover, retuning that moves
   the decision, a calibration loop that closes on real elapsed cycles,
   back-pressure, every op class and data type terminating, reset in the middle
   of a frame, tag exhaustion, stale and out-of-range completions, torn frames
-- 18 deliberate breaks of the design (`test/mutate_sim.py`), each of which
-  must make a named test fail; all 18 are caught
+- 21 deliberate breaks of the design (`test/mutate_sim.py`), each of which
+  must make a named test fail; all 21 are caught (`make mutate`, 2026-11-04)
 - In the parent repository, which compiles the same dispatcher modules: the
   shared cost engine makes the same decision as five parallel ones on every
   descriptor given (`make cost-mux`), the SPI slave is proved by induction,
@@ -146,10 +146,10 @@ peripheral at 1 MHz, a few milliseconds bit-banged.
 
 ## Timing and area
 
-The latest signed-off harden is v3.10 (2026-10-18, 4x4, one LibreLane run):
-every corner met setup at 66 ns, worst setup slack +14.06 ns and worst hold
-slack +0.105 ns, DRC, LVS and antenna clean, 48.6% utilisation, and 22 of 22
-tests pass on the hardened netlist. It still has 1,230 slew warnings at the
+The latest signed-off harden is v3.12 (2026-11-04, 4x4, one LibreLane run):
+every corner met setup at 66 ns, worst setup slack +7.23 ns and worst hold
+slack +0.096 ns, DRC, LVS and antenna clean, 51.7% utilisation, and 24 of 24
+tests pass on the hardened netlist. It still has 218 slew warnings at the
 slowest corner. The first signed-off harden was v2 (2026-10-05, 4x4: slow-corner
 slack +2.199 ns, 17 of 17 tests on its netlist). v3 is the same logic minus the
 parts listed at the top of `info.yaml`, on 4x4 tiles (3x4 was tried for v3.1

@@ -158,10 +158,12 @@ module mom_param_rom (
 	localparam [42:0] DEF_CRYPTO = 43'h20082020980;
 	localparam [42:0] DEF_GPU = 43'h2040108080e;
 	reg [42:0] row [0:NENG - 1];
-	function automatic signed [31:0] sv2v_cast_32_signed;
-		input reg signed [31:0] inp;
-		sv2v_cast_32_signed = inp;
-	endfunction
+	localparam signed [31:0] GPU_ROW = (NENG > 32'sd5 ? 32'sd5 : 0);
+	generate
+		if (NENG > 6) begin : g_too_many_slots
+			mom_param_rom_supports_at_most_six_slots u_bad();
+		end
+	endgenerate
 	always @(posedge clk or negedge rst_n)
 		if (!rst_n) begin
 			row[3'd0] <= DEF_CPU;
@@ -169,11 +171,8 @@ module mom_param_rom (
 			row[3'd2] <= DEF_TPU;
 			row[3'd3] <= DEF_NTT;
 			row[3'd4] <= DEF_CRYPTO;
-			begin : sv2v_autoblock_1
-				reg signed [31:0] e;
-				for (e = 32'sd5; e < sv2v_cast_32_signed(NENG); e = e + 1)
-					row[e] <= DEF_GPU;
-			end
+			if (NENG > 32'sd5)
+				row[GPU_ROW] <= DEF_GPU;
 		end
 		else if ((wr_en && wr_priv) && ({29'd0, wr_engine} < NENG))
 			row[wr_engine] <= wr_data;
@@ -1226,7 +1225,9 @@ module hydra_tt_regs (
 	last_engine,
 	disp_sticky,
 	last_tag,
-	margin_nib
+	margin_nib,
+	pins_in,
+	gpo
 );
 	reg _sv2v_0;
 	parameter [31:0] NTAG = 8;
@@ -1274,6 +1275,8 @@ module hydra_tt_regs (
 	output wire disp_sticky;
 	output wire [3:0] last_tag;
 	output wire [3:0] margin_nib;
+	input wire [15:0] pins_in;
+	output wire [1:0] gpo;
 	localparam [6:0] A_ID = 7'h00;
 	localparam [6:0] A_WD = 7'h01;
 	localparam [6:0] A_CTRL = 7'h02;
@@ -1287,6 +1290,8 @@ module hydra_tt_regs (
 	localparam [6:0] A_PARAM = 7'h0b;
 	localparam [6:0] A_GLOBAL = 7'h0c;
 	localparam [6:0] A_INFO = 7'h0d;
+	localparam [6:0] A_PINS = 7'h0e;
+	localparam [6:0] A_GPO = 7'h0f;
 	localparam [7:0] NTAG8 = NTAG[7:0];
 	localparam [31:0] ID_VALUE = 32'h48594d33;
 	function automatic [4:0] reg_len;
@@ -1305,12 +1310,14 @@ module hydra_tt_regs (
 			A_PARAM: reg_len = 5'd6;
 			A_GLOBAL: reg_len = 5'd2;
 			A_INFO: reg_len = 5'd1;
+			A_PINS: reg_len = 5'd2;
+			A_GPO: reg_len = 5'd1;
 			default: reg_len = 5'd0;
 		endcase
 	endfunction
 	function automatic writable;
 		input reg [6:0] a;
-		writable = ((((((a == A_WD) || (a == A_CTRL)) || (a == A_ACTION)) || (a == A_COMP)) || (a == A_FENCE)) || (a == A_PARAM)) || (a == A_GLOBAL);
+		writable = (((((((a == A_WD) || (a == A_CTRL)) || (a == A_ACTION)) || (a == A_COMP)) || (a == A_FENCE)) || (a == A_PARAM)) || (a == A_GLOBAL)) || (a == A_GPO);
 	endfunction
 	reg have_cmd;
 	reg cmd_rd;
@@ -1325,6 +1332,7 @@ module hydra_tt_regs (
 	reg param_lock_q;
 	reg [3:0] fence_q;
 	reg [11:0] global_q;
+	reg [1:0] gpo_q;
 	reg pending_q;
 	reg wd_block_q;
 	reg s_disp;
@@ -1359,6 +1367,7 @@ module hydra_tt_regs (
 			param_lock_q <= 1'b0;
 			fence_q <= 4'd0;
 			global_q <= 12'h4c8;
+			gpo_q <= 2'd0;
 			pending_q <= 1'b0;
 			wd_block_q <= 1'b0;
 			comp_valid <= 1'b0;
@@ -1430,6 +1439,7 @@ module hydra_tt_regs (
 					end
 					A_FENCE: fence_q <= w8[3:0];
 					A_GLOBAL: global_q <= wbuf[11:0];
+					A_GPO: gpo_q <= w8[1:0];
 					A_PARAM:
 						if (!param_lock_q) begin
 							csr_wr <= 1'b1;
@@ -1476,6 +1486,7 @@ module hydra_tt_regs (
 	assign csr_bw_dma_log2 = global_q[11:8];
 	assign csr_eps_mem = global_q[7:4];
 	assign csr_e_shift = global_q[3:0];
+	assign gpo = gpo_q;
 	assign csr_cal_freeze = cal_freeze_q;
 	assign csr_cal_reset = cal_reset_q;
 	wire any_busy = |obs_tag_busy;
@@ -1502,6 +1513,8 @@ module hydra_tt_regs (
 			A_FENCE: rval = {{124 {1'b0}}, fence_q};
 			A_GLOBAL: rval = {{116 {1'b0}}, global_q};
 			A_INFO: rval = {{120 {1'b0}}, NTAG8};
+			A_PINS: rval = {{112 {1'b0}}, pins_in};
+			A_GPO: rval = {{126 {1'b0}}, gpo_q};
 			default: rval = {mom_pkg_WD_W {1'b0}};
 		endcase
 	end
@@ -1576,7 +1589,17 @@ module tt_um_hydra_mom (
 		.rst_n(rst_n_sync)
 	);
 	localparam [31:0] NTAG = 4;
-	wire _unused = &{ena, uio_in, ui_in[7:3], 1'b0};
+	reg [13:0] pins_meta;
+	reg [13:0] pins_q;
+	always @(posedge clk or negedge rst_n_sync)
+		if (!rst_n_sync) begin
+			pins_meta <= 14'd0;
+			pins_q <= 14'd0;
+		end
+		else begin
+			pins_meta <= {ena, ui_in[7:3], uio_in};
+			pins_q <= pins_meta;
+		end
 	wire spi_cipo;
 	wire cs_start;
 	wire cs_end;
@@ -1622,6 +1645,7 @@ module tt_um_hydra_mom (
 	wire [2:0] r_csr_engine;
 	wire [2:0] r_last_engine;
 	wire [42:0] r_csr_data;
+	wire [1:0] r_gpo;
 	wire disp_valid;
 	wire [2:0] disp_engine;
 	wire [3:0] disp_tag;
@@ -1675,7 +1699,9 @@ module tt_um_hydra_mom (
 		.last_engine(r_last_engine),
 		.disp_sticky(r_disp_sticky),
 		.last_tag(r_last_tag),
-		.margin_nib(r_margin_nib)
+		.margin_nib(r_margin_nib),
+		.pins_in({2'b00, pins_q}),
+		.gpo(r_gpo)
 	);
 	localparam [31:0] mom_pkg_ENG_N = 5;
 	function automatic [127:0] sv2v_cast_128;
@@ -1718,7 +1744,8 @@ module tt_um_hydra_mom (
 		.obs_tag_busy(obs_tag_busy)
 	);
 	assign uo_out = {wd_ready, |obs_tag_busy, r_disp_sticky, r_last_engine, r_irq, spi_cipo};
-	assign uio_out = {r_margin_nib, r_last_tag};
+	assign uio_out = {r_margin_nib, r_gpo, r_last_tag[1:0]};
+	wire _unused_tag = &{1'b0, r_last_tag[3:2]};
 	assign uio_oe = 8'hff;
 	wire _unused_spi = &{cs_active, disp_wd, 1'b0};
 endmodule

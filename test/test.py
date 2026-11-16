@@ -58,10 +58,10 @@ ENG_NAME = {0: "CPU", 1: "SIMD", 2: "TPU", 3: "NTT", 4: "CRYPTO"}
 # ---------------------------------------------------------------------------
 A_ID, A_WD, A_CTRL, A_ACTION, A_COMP, A_STATUS = 0x00, 0x01, 0x02, 0x03, 0x04, 0x05
 A_RESULT, A_RESERVED07, A_CALUPD, A_BUSY, A_FENCE, A_PARAM = 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B
-A_GLOBAL, A_INFO = 0x0C, 0x0D
+A_GLOBAL, A_INFO, A_PINS, A_GPO = 0x0C, 0x0D, 0x0E, 0x0F
 LEN = {A_ID: 4, A_WD: 16, A_CTRL: 1, A_ACTION: 1, A_COMP: 1, A_STATUS: 2,
        A_RESULT: 6, A_CALUPD: 2, A_BUSY: 2, A_FENCE: 1, A_PARAM: 6,
-       A_GLOBAL: 2, A_INFO: 1}
+       A_GLOBAL: 2, A_INFO: 1, A_PINS: 2, A_GPO: 1}
 ID_V3 = 0x48594D33  # "HYM3"
 
 # STATUS bits (16-bit register, MSB first as documented in hydra_tt_regs.sv)
@@ -109,6 +109,7 @@ class Tile:
     def __init__(self, dut):
         self.dut = dut
         self.pins = 0b100          # CSn idle high
+        self.gpi = 0               # ui_in[7:3], the general-purpose inputs
 
     def _set(self, sck=None, copi=None, csn=None):
         if sck is not None:
@@ -117,7 +118,7 @@ class Tile:
             self.pins = (self.pins & ~0b010) | ((copi & 1) << 1)
         if csn is not None:
             self.pins = (self.pins & ~0b100) | ((csn & 1) << 2)
-        self.dut.ui_in.value = self.pins
+        self.dut.ui_in.value = self.pins | ((self.gpi & 0x1F) << 3)
 
     async def xfer(self, tx_bytes, stop_after=None):
         """One CS-framed transfer. Returns the bytes seen on CIPO.

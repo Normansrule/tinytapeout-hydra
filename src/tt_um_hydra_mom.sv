@@ -66,8 +66,9 @@
  * ui_in[1]     COPI
  * ui_in[2]     CSn         idle high; a host that holds it low through reset
  *                          gets one empty frame, which is not an error
- * ui_in[7:3]   unused      (v2 sampled ui_in[7:4] as a personality strap;
- *                          v3 ignores it, so a v2 host still works)
+ * ui_in[7:3]   GPI[4:0]    general-purpose inputs, read in PINS (0x0E)
+ *                          (v2 sampled ui_in[7:4] as a personality strap;
+ *                          v3 has none, so a v2 host still works)
  *
  * uo_out[0]    CIPO
  * uo_out[1]    IRQ         any sticky STATUS flag: dispatched, unsupported,
@@ -78,9 +79,14 @@
  * uo_out[6]    any_busy    at least one tag outstanding
  * uo_out[7]    ready       the MOM can accept a descriptor
  *
- * uio_out[3:0] tag         tag of the last dispatch (0..3)
+ * uio_out[1:0] tag         tag of the last dispatch (0..3)
+ * uio_out[3:2] GPO[1:0]    general-purpose outputs, written in GPO (0x0F)
  * uio_out[7:4] margin      1 + floor(log2(runner-up margin)), 0 if none
  * uio_oe                   all ones: every bidirectional is an output
+ * uio_in[7:0]  readback    the driven pads, read in PINS (0x0E): a host
+ *                          compares them with tag and margin to check the
+ *                          pad drivers and the board
+ * ena                      read in PINS (0x0E)
  *
  * v2 history: v2 carried both personalities, selected by a reset strap
  * (ui_in[7:4] = 4'hA for registers), and fixed the v1 margin nibble, which
@@ -145,7 +151,20 @@ module tt_um_hydra_mom
   // Four tags: see the header. The chip (mom/hydra_mom_pins.sv) uses eight.
   localparam int unsigned NTAG = 4;
 
-  wire _unused = &{ena, uio_in, ui_in[7:3], 1'b0};
+  // Every input pin does something (v3.11). ui_in[7:3] are general-purpose
+  // inputs, uio_in reads back the pads the tile drives (a check on the pad
+  // drivers and the board), and ena says the tile is selected. All of them
+  // are asynchronous to clk, so each passes two flops before the PINS
+  // register (0x0E) can read it.
+  logic [13:0] pins_meta, pins_q;
+  always_ff @(posedge clk or negedge rst_n_sync) begin
+    if (!rst_n_sync) begin
+      pins_meta <= 14'd0; pins_q <= 14'd0;
+    end else begin
+      pins_meta <= {ena, ui_in[7:3], uio_in};
+      pins_q    <= pins_meta;
+    end
+  end
 
   // =========================================================================
   // REGISTER front end
@@ -168,6 +187,7 @@ module tt_um_hydra_mom
   wire [3:0]         r_comp_tag, r_fence_tag, r_bw, r_eps, r_esh, r_last_tag, r_margin_nib;
   wire [2:0]         r_csr_engine, r_last_engine;
   wire [EPARAM_W-1:0] r_csr_data;
+  wire [1:0]         r_gpo;
 
   // =========================================================================
   // MOM
@@ -202,7 +222,8 @@ module tt_um_hydra_mom
     .err_stale_comp(err_stale_comp), .obs_margin(obs_margin),
     .obs_cal_updates(obs_cal_updates), .obs_tag_busy(obs_tag_busy),
     .irq(r_irq), .last_engine(r_last_engine), .disp_sticky(r_disp_sticky),
-    .last_tag(r_last_tag), .margin_nib(r_margin_nib)
+    .last_tag(r_last_tag), .margin_nib(r_margin_nib),
+    .pins_in({2'b00, pins_q}), .gpo(r_gpo)
   );
 
   mom_top #(.NTAG(NTAG), .QMAX(NTAG)) u_mom (
@@ -227,7 +248,10 @@ module tt_um_hydra_mom
   // Pins
   // =========================================================================
   assign uo_out  = { wd_ready, |obs_tag_busy, r_disp_sticky, r_last_engine, r_irq, spi_cipo };
-  assign uio_out = { r_margin_nib, r_last_tag };
+  // uio[3:2]: four tags need two bits, so the top two are general-purpose
+  // outputs (GPO, 0x0F) rather than constant zeros (v3.11)
+  assign uio_out = { r_margin_nib, r_gpo, r_last_tag[1:0] };
+  wire _unused_tag = &{1'b0, r_last_tag[3:2]};
   assign uio_oe  = 8'hFF;      // every bidirectional is an output
 
   // The descriptor as dispatched is not observed on this tile (see the

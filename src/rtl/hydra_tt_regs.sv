@@ -71,6 +71,14 @@
  *   0x0B PARAM                  6   WO   {2'b0, engine[2:0], row[42:0]}
  *   0x0C GLOBAL                 2   RW   {4'b0, bw_dma_log2, eps_mem, e_shift}
  *   0x0D INFO                   1   RO   NTAG (4 on this tile)
+ *   0x0E PINS                   2   RO   {2'b0, ena, ui_in[7:3], uio_in[7:0]},
+ *                                        each through a two-flop synchroniser.
+ *                                        ui_in[7:3] are general-purpose inputs;
+ *                                        uio_in reads back the bidirectional
+ *                                        pads the tile drives (v3.11)
+ *   0x0F GPO                    1   RW   [1:0] general-purpose outputs on
+ *                                        uio[3:2], which the 2-bit tag never
+ *                                        uses (v3.11); reset 0
  *   other                           read 0, write -> FRAME_ERR
  * ===========================================================================
  */
@@ -127,14 +135,19 @@ module hydra_tt_regs
   output wire  [2:0]         last_engine,
   output wire                disp_sticky,
   output wire  [3:0]         last_tag,
-  output wire  [3:0]         margin_nib
+  output wire  [3:0]         margin_nib,
+
+  // ---- spare pins, already synchronised (v3.11) ----------------------------
+  input  wire  [15:0]        pins_in,
+  output wire  [1:0]         gpo
 );
 
   localparam logic [6:0] A_ID = 7'h00, A_WD = 7'h01, A_CTRL = 7'h02,
                          A_ACTION = 7'h03, A_COMP = 7'h04, A_STATUS = 7'h05,
                          A_RESULT = 7'h06, A_CALUPD = 7'h08,
                          A_BUSY = 7'h09, A_FENCE = 7'h0A, A_PARAM = 7'h0B,
-                         A_GLOBAL = 7'h0C, A_INFO = 7'h0D;
+                         A_GLOBAL = 7'h0C, A_INFO = 7'h0D,
+                         A_PINS = 7'h0E, A_GPO = 7'h0F;
 
   localparam logic [7:0]  NTAG8    = NTAG[7:0];
   localparam logic [31:0] ID_VALUE = 32'h48594D33;
@@ -154,13 +167,16 @@ module hydra_tt_regs
       A_PARAM:  reg_len = 5'd6;
       A_GLOBAL: reg_len = 5'd2;
       A_INFO:   reg_len = 5'd1;
+      A_PINS:   reg_len = 5'd2;
+      A_GPO:    reg_len = 5'd1;
       default:  reg_len = 5'd0;
     endcase
   endfunction
 
   function automatic logic writable(input logic [6:0] a);
     writable = (a == A_WD) || (a == A_CTRL) || (a == A_ACTION) || (a == A_COMP) ||
-               (a == A_FENCE) || (a == A_PARAM) || (a == A_GLOBAL);
+               (a == A_FENCE) || (a == A_PARAM) || (a == A_GLOBAL) ||
+               (a == A_GPO);
   endfunction
 
   // ---------------------------------------------------------------------------
@@ -179,6 +195,7 @@ module hydra_tt_regs
   logic            hold_q, cal_freeze_q, cal_reset_q, param_lock_q;
   logic [3:0]      fence_q;
   logic [11:0]     global_q;
+  logic [1:0]      gpo_q;
   logic            pending_q;
   // Set when a WD write starts while a GO is pending (audit R7, 2026-10-11):
   // the descriptor register IS the pending request, so it may not change
@@ -220,6 +237,7 @@ module hydra_tt_regs
       hold_q <= 1'b0; cal_freeze_q <= 1'b0; cal_reset_q <= 1'b0; param_lock_q <= 1'b0;
       fence_q <= 4'd0;
       global_q <= {4'd4, 4'd12, 4'd8};      // v1's tie-offs, bit for bit
+      gpo_q    <= 2'd0;
       pending_q <= 1'b0; wd_block_q <= 1'b0;
       comp_valid <= 1'b0; comp_tag <= 4'd0;
       csr_wr <= 1'b0; csr_engine <= 3'd0; csr_data <= {EPARAM_W{1'b0}};
@@ -276,6 +294,7 @@ module hydra_tt_regs
           end
           A_FENCE:  fence_q  <= w8[3:0];
           A_GLOBAL: global_q <= wbuf[11:0];
+          A_GPO:    gpo_q    <= w8[1:0];
           A_PARAM: if (!param_lock_q) begin
             csr_wr     <= 1'b1;
             csr_engine <= wbuf[45:43];
@@ -327,6 +346,7 @@ module hydra_tt_regs
   assign csr_bw_dma_log2 = global_q[11:8];
   assign csr_eps_mem     = global_q[7:4];
   assign csr_e_shift     = global_q[3:0];
+  assign gpo             = gpo_q;
   assign csr_cal_freeze  = cal_freeze_q;
   assign csr_cal_reset   = cal_reset_q;
 
@@ -360,6 +380,8 @@ module hydra_tt_regs
       A_FENCE:  rval = {{(WD_W-4){1'b0}}, fence_q};
       A_GLOBAL: rval = {{(WD_W-12){1'b0}}, global_q};
       A_INFO:   rval = {{(WD_W-8){1'b0}}, NTAG8};
+      A_PINS:   rval = {{(WD_W-16){1'b0}}, pins_in};
+      A_GPO:    rval = {{(WD_W-2){1'b0}}, gpo_q};
       default:  rval = {WD_W{1'b0}};
     endcase
   end

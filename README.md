@@ -27,9 +27,9 @@ Maintained by [@Normansrule](https://github.com/Normansrule)
 
 > **Where things stand, by revision.** This tile is the **scheduler only**: no central processing unit (CPU),
 > graphics processing unit (GPU), tensor processing unit (TPU), vector, transform or security hardware is on it.
-> The engines it chooses between are outside it, and the host reports when a job finished. The **v3.10** harden
-> (2026-10-18, one LibreLane run at 4×4 tiles, 66 ns) signed off with design rules, layout versus schematic and
-> antenna clean and timing met at all nine corners, and all 22 tests pass on its netlist. It still has **1,230
+> The engines it chooses between are outside it, and the host reports when a job finished. The **v3.12** harden
+> (2026-11-04, one LibreLane run at 4×4 tiles, 66 ns) signed off with design rules, layout versus schematic and
+> antenna clean and timing met at all nine corners, and all 24 tests pass on its netlist. It still has **218
 > slew warnings** at the slowest corner. A signed-off layout is not fabricated or tested silicon. This
 > repository's own `gds` workflow (Tiny Tapeout's GitHub flow, which builds the submission) does not yet finish:
 > its Verilator 5.018 lint stops on one reset loop in `src/project.v` (BLKLOOPINIT) that Verilator 5.032 accepts.
@@ -63,11 +63,11 @@ Maintained by [@Normansrule](https://github.com/Normansrule)
 This tile in motion, filmed from the atlas page:
 
 <p align="center">
-  <img src="docs/img/story.webp" width="100%" alt="The atlas's opening story filmed from the page: the hardened tile's whole routed layout, the dispatch unit's cells coloured by block, one decision lighting the wires cycle by cycle, single standard cells, the cells and four metal layers pulled apart into a turning 3D stack, and the whole tile again with the 1,813 nets that switched.">
+  <img src="docs/img/story.webp" width="100%" alt="The atlas's opening story filmed from the page: the hardened tile's whole routed layout, the dispatch unit's cells coloured by block, one decision lighting the wires cycle by cycle, single standard cells, the cells and four metal layers pulled apart into a turning 3D stack, and the whole tile again with the 2,125 nets that switched.">
 </p>
 
 The [Silicon Atlas](https://normansrule.github.io/hydra-skywater130/) opens on this tile's own routed layout from
-the v3.10 harden and zooms in while one decision plays on it. Each wire glows while its net is high in a
+the v3.12 harden and zooms in while one decision plays on it. Each wire glows while its net is high in a
 gate-level simulation of the hardened netlist. First the dispatch logic's cells, coloured by the RTL block each
 belongs to:
 
@@ -94,7 +94,7 @@ And back out to the whole tile, with every net that is high at the select glowin
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/atlas-switched.dark.png">
-  <img src="docs/img/atlas-switched.png" width="100%" alt="The whole tile with the nets that are high at the select glowing amber, and the card: 1,813 nets switched to make one decision, 12% of the tile's nets, changing value 3,911 times in 28 cycles.">
+  <img src="docs/img/atlas-switched.png" width="100%" alt="The whole tile with the nets that are high at the select glowing amber, and the card: 2,125 nets switched to make one decision, 13% of the tile's nets, changing value 4,687 times in 28 cycles.">
 </picture>
 
 The same layout is a free explorer: zoom, step through the recorded cycles, switch layers, select a wire to name
@@ -213,8 +213,10 @@ by Tiny Tapeout's own tool (`make render-layout` in the parent). A layout, not f
 
 | check | result |
 |---|---|
-| Tile tests on RTL (`make tile` in the parent) | **22 / 22** |
+| Tile tests on RTL (`make tile` in the parent) | **24 / 24** |
 | Deliberate breaks (`test/mutate_sim.py`) | each caught by the test named for it |
+| v3.12 harden, 2026-11-04 (MAX_FANOUT_CONSTRAINT 6; netlist proved equivalent to v3.11) | sign-off clean: DRC, LVS, antenna 0; setup +7.23 ns (v3.12), hold +0.096 ns worst corner; 51.7% of the core; **slew 218 / 156 / 113** at the slow corners and 12 / 0 / 0 at the typical corners, 0 capacitance |
+| Gate level on the v3.12 netlist | **24 / 24** |
 | v3.10 harden, 2026-10-18 (the scheduler liveness fix) | sign-off clean: DRC, LVS, antenna 0; setup +14.06 ns (v3.10), hold +0.105 ns worst corner; 48.6% of the core; **slew 1,230 / 819 / 557** at the slow corners and 21 / 11 / 11 at the typical corners, 0 capacitance |
 | Gate level on the v3.10 netlist | **22 / 22** (the new test is `test_full_only_engine_recovers`) |
 | Verilator `-Wall` on `src/project.v` | **0 warnings** |

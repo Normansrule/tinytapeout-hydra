@@ -104,6 +104,14 @@
   "//": "fanout buffers and gates driving 10-16 loads, a fanout problem.",
   "EXTRA_EXCLUDED_CELLS": ["sky130_fd_sc_hd__clkdlybuf4s*", "sky130_fd_sc_hd__dlygate4sd*", "sky130_fd_sc_hd__dlymetal6s*", "sky130_fd_sc_hd__buf_1", "sky130_fd_sc_hd__clkbuf_1"],
 
+  "//": "v3.12 (2026-11-04, rung fanout6, 29 min): the fanout limit 10 -> 6, one change.",
+  "//": "v3.11 left 1,041 slew warnings at max_ss from 140 nets, nearly all buf_2 fanout",
+  "//": "buffers driving 10-16 loads; a limit of 6 splits those trees. SIGNED OFF CLEAN:",
+  "//": "DRC, LVS, antenna 0; setup +7.228 ns at max_ss, hold +0.096 ns; 51.7%; slew",
+  "//": "1,041 -> 218 at max_ss (nom_ss 156, min_ss 113, max_tt 12, every other corner 0);",
+  "//": "capacitance 0; 24/24 on the hardened netlist. Setup margin fell from +12.556 ns.",
+  "MAX_FANOUT_CONSTRAINT": 6,
+
   "//": "Antenna repair. Session 139 set RUN_ANTENNA_REPAIR and GRT_REPAIR_ANTENNAS,",
   "//": "but checked against LibreLane 3.0.14 the second is a deprecated alias of the",
   "//": "first and both default to on -- that block changed nothing. The settings",
