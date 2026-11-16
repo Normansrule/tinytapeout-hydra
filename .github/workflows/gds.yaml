@@ -15,6 +15,12 @@ jobs:
 
       - name: Build GDS
         uses: TinyTapeout/tt-gds-action@tt10
+        # The action fetches the PDK through volare, which asks GitHub's API for
+        # the release; unauthenticated, that API is rate-limited per runner IP and
+        # failed two runs in a row on 2026-11-16 ("403 rate limit exceeded" for
+        # efabless/volare). volare reads GITHUB_TOKEN when it is set.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           flow: openlane2
 
@@ -56,6 +62,8 @@ jobs:
 
       - name: Install Sky130 PDK
         uses: TinyTapeout/volare-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # the same rate limit as the GDS step
         with:
           pdk_name: sky130
           pdk_version: cd1748bb197f9b7af62a54507de6624e30363943
