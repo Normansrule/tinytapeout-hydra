@@ -13,12 +13,23 @@ jobs:
         with:
           submodules: recursive
 
+      # The harden asks volare for the PDK it needs (0fe599b2...) through GitHub's
+      # API; unauthenticated, that API is rate-limited per runner IP, and three
+      # runs in a row stopped there on 2026-11-16 ("403 rate limit exceeded" for
+      # efabless/volare), the token alone did not reach it. Install that PDK first
+      # with TT's own volare action, which keeps it in the Actions cache, so the
+      # harden finds it on disk and later runs never call the API.
+      - name: Install the harden's PDK (cached)
+        uses: TinyTapeout/volare-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          pdk_name: sky130
+          pdk_version: 0fe599b2afb6708d281543108caf8310912f54af
+          pdk_root: /home/runner/pdk
+
       - name: Build GDS
         uses: TinyTapeout/tt-gds-action@tt10
-        # The action fetches the PDK through volare, which asks GitHub's API for
-        # the release; unauthenticated, that API is rate-limited per runner IP and
-        # failed two runs in a row on 2026-11-16 ("403 rate limit exceeded" for
-        # efabless/volare). volare reads GITHUB_TOKEN when it is set.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
