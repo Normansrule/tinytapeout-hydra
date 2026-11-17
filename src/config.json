@@ -53,7 +53,7 @@
   "//": "took hours; v3.3 at 50% with real buffers then hung in that step for over",
   "//": "a day (net 7000 of 11823). Back to the default 20 (v3.4, 2026-10-17): the",
   "//": "real cause is the buffer cell, below, not the margin.",
-  "DESIGN_REPAIR_MAX_SLEW_PCT": 20,
+  "DESIGN_REPAIR_MAX_SLEW_PCT": 30,
   "DESIGN_REPAIR_MAX_CAP_PCT": 20,
 
   "//": "v3.3 (2026-10-15): the v3.2 harden (4x4, sign-off clean) still had 3665",
@@ -102,7 +102,14 @@
   "//": "fanout buffer with 15 loads) now fails at the three typical corners (16",
   "//": "each), where v3.6 had 0. The margin stays at 20; what is left is buf_2",
   "//": "fanout buffers and gates driving 10-16 loads, a fanout problem.",
-  "EXTRA_EXCLUDED_CELLS": ["sky130_fd_sc_hd__clkdlybuf4s*", "sky130_fd_sc_hd__dlygate4sd*", "sky130_fd_sc_hd__dlymetal6s*", "sky130_fd_sc_hd__buf_1", "sky130_fd_sc_hd__clkbuf_1"],
+  "//": "v3.13 (2026-11-15, rung fanout4): fanout 6 -> 4: slew 218 -> 134 (slow corners only; max_tt 12 -> 0),",
+  "//": "setup +6.09 ns, hold +0.090 ns, 55.1%, 24/24 gate level. v3.14 (strongbuf4): buf_2 and clkbuf_2 also",
+  "//": "excluded, so fanout trees use _4 or stronger buffers: slew 102, setup +7.71 ns, hold +0.096 ns, 59.9%,",
+  "//": "24/24. Tried and not adopted: RSZ_CORNERS (repair at three corners, no change at all), post-route",
+  "//": "design repair (111), slew margin 40% (repair stalled 159 min). v3.16 (2026-11-16, rung margin30): the",
+  "//": "slew repair margin 20 -> 30%: SIGNED OFF CLEAN, DRC, LVS, antenna 0; setup +8.15 ns, hold +0.099 ns;",
+  "//": "59.97%; slew 59, slow corners only; capacitance 0; 24/24 on the hardened netlist.",
+  "EXTRA_EXCLUDED_CELLS": ["sky130_fd_sc_hd__clkdlybuf4s*", "sky130_fd_sc_hd__dlygate4sd*", "sky130_fd_sc_hd__dlymetal6s*", "sky130_fd_sc_hd__buf_1", "sky130_fd_sc_hd__clkbuf_1", "sky130_fd_sc_hd__buf_2", "sky130_fd_sc_hd__clkbuf_2"],
 
   "//": "v3.12 (2026-11-04, rung fanout6, 29 min): the fanout limit 10 -> 6, one change.",
   "//": "v3.11 left 1,041 slew warnings at max_ss from 140 nets, nearly all buf_2 fanout",
@@ -110,7 +117,7 @@
   "//": "DRC, LVS, antenna 0; setup +7.228 ns at max_ss, hold +0.096 ns; 51.7%; slew",
   "//": "1,041 -> 218 at max_ss (nom_ss 156, min_ss 113, max_tt 12, every other corner 0);",
   "//": "capacitance 0; 24/24 on the hardened netlist. Setup margin fell from +12.556 ns.",
-  "MAX_FANOUT_CONSTRAINT": 6,
+  "MAX_FANOUT_CONSTRAINT": 4,
 
   "//": "Antenna repair. Session 139 set RUN_ANTENNA_REPAIR and GRT_REPAIR_ANTENNAS,",
   "//": "but checked against LibreLane 3.0.14 the second is a deprecated alias of the",

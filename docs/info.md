@@ -146,11 +146,12 @@ peripheral at 1 MHz, a few milliseconds bit-banged.
 
 ## Timing and area
 
-The latest signed-off harden is v3.12 (2026-11-04, 4x4, one LibreLane run):
-every corner met setup at 66 ns, worst setup slack +7.23 ns and worst hold
-slack +0.096 ns, DRC, LVS and antenna clean, 51.7% utilisation, and 24 of 24
-tests pass on the hardened netlist. It still has 218 slew warnings at the
-slowest corner. The first signed-off harden was v2 (2026-10-05, 4x4: slow-corner
+The latest signed-off harden is v3.16 (2026-11-16, 4x4, one LibreLane run):
+every corner met setup at 66 ns, worst setup slack +8.15 ns and worst hold
+slack +0.099 ns, DRC, LVS and antenna clean, 60.0% utilisation, and 24 of 24
+tests pass on the hardened netlist. It still has 59 slew warnings at the
+slowest corner (59 / 46 / 29 at the three slow corners, none at the typical and
+fast ones; v3.12 had 218). The first signed-off harden was v2 (2026-10-05, 4x4: slow-corner
 slack +2.199 ns, 17 of 17 tests on its netlist). v3 is the same logic minus the
 parts listed at the top of `info.yaml`, on 4x4 tiles (3x4 was tried for v3.1
 and did not route). The cell counts below are synthesis estimates, not harden
